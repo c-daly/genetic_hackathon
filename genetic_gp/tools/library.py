@@ -8,10 +8,122 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+import os
 import yaml
 
 from genetic_gp.core.expressions import Const, Var, BinOp, Sum, Product
 from genetic_gp.core.signatures import behavioral_signature, signature_similarity
+from genetic_gp.core.simplify import simplify, is_degenerate
+
+
+# LLM configuration for name suggestion
+_llm_provider: str = "openai"  # "openai" or "anthropic"
+_llm_model: str | None = None  # None = use default for provider
+
+
+def configure_llm(provider: str = "openai", model: str | None = None) -> None:
+    """Configure which LLM to use for name suggestions.
+
+    Args:
+        provider: "openai" or "anthropic"
+        model: Model name (or None for default)
+    """
+    global _llm_provider, _llm_model
+    _llm_provider = provider
+    _llm_model = model
+
+
+def suggest_name_via_llm(expr: Any, description: str = "") -> str | None:
+    """Use an LLM to suggest a descriptive name for a mathematical pattern.
+
+    Uses OpenAI by default (configure with configure_llm()).
+
+    Args:
+        expr: The expression to name
+        description: Optional description of what the expression computes
+
+    Returns:
+        Suggested name, or None if LLM is not available
+    """
+    prompt = f"""Given this mathematical expression:
+{expr}
+
+{f"It computes: {description}" if description else ""}
+
+Suggest a short, descriptive function name (1-2 words, snake_case) that captures what this expression computes.
+Examples: sum_to_n, factorial, double, square, triangular_number, power
+
+Respond with ONLY the function name, nothing else."""
+
+    try:
+        if _llm_provider == "openai":
+            name = _suggest_via_openai(prompt)
+        elif _llm_provider == "anthropic":
+            name = _suggest_via_anthropic(prompt)
+        else:
+            return None
+
+        if name:
+            # Sanitize: only allow alphanumeric and underscores
+            name = name.strip().lower().replace(' ', '_')
+            name = ''.join(c for c in name if c.isalnum() or c == '_')
+            return name if name else None
+        return None
+
+    except Exception:
+        return None
+
+
+def _suggest_via_openai(prompt: str) -> str | None:
+    """Get name suggestion from OpenAI."""
+    try:
+        from openai import OpenAI
+    except ImportError:
+        return None
+
+    api_key = os.environ.get('OPENAI_API_KEY')
+    if not api_key:
+        return None
+
+    try:
+        client = OpenAI(api_key=api_key)
+        model = _llm_model or "gpt-4o-mini"
+
+        response = client.chat.completions.create(
+            model=model,
+            max_tokens=50,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        return response.choices[0].message.content
+    except Exception:
+        return None
+
+
+def _suggest_via_anthropic(prompt: str) -> str | None:
+    """Get name suggestion from Anthropic."""
+    try:
+        import anthropic
+    except ImportError:
+        return None
+
+    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    if not api_key:
+        return None
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        model = _llm_model or "claude-haiku-3-5-20241022"
+
+        response = client.messages.create(
+            model=model,
+            max_tokens=50,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        return response.content[0].text
+    except Exception:
+        return None
 
 
 def _extract_pattern(expr: Any) -> tuple[Any, Dict[str, float]] | None:
@@ -347,6 +459,9 @@ class PrimitiveLibrary:
         For example, we don't want to save n*2, n*3, n*4 as separate primitives -
         instead we want to recognize these as instances of the general pattern n*k.
 
+        Also rejects complex expressions that compute trivial functions (like
+        Σ(j=n..n)[∏(k=2..3)[j]] which just computes n² in a roundabout way).
+
         Returns:
             True if expression is too simple to save
         """
@@ -370,6 +485,41 @@ class PrimitiveLibrary:
             # Not novel patterns worth saving.
             if left_is_var and right_is_var and expr.left.name == expr.right.name:
                 return True
+
+        # Check behavioral signature against trivial patterns
+        # This catches complex expressions that compute simple functions
+        if self._has_trivial_behavior(expr):
+            return True
+
+        return False
+
+    def _has_trivial_behavior(self, expr: Any) -> bool:
+        """Check if expression computes a trivial function regardless of structure.
+
+        Checks against known trivial patterns: n, n², n³, 2n, 3n, etc.
+        This catches degenerate expressions like Σ(j=n..n)[∏(k=2..3)[j]] that compute n².
+        """
+        sig = behavioral_signature(expr)
+
+        # Generate signatures for trivial patterns and compare
+        trivial_patterns = [
+            Var('n'),                                    # n
+            BinOp('+', Var('n'), Var('n')),             # 2n
+            BinOp('*', Var('n'), Var('n')),             # n²
+            BinOp('*', Var('n'), BinOp('*', Var('n'), Var('n'))),  # n³
+            BinOp('^', Var('n'), Const(2)),             # n^2
+            BinOp('^', Var('n'), Const(3)),             # n^3
+        ]
+        # Also check n*k and n+k for small k
+        for k in range(2, 11):
+            trivial_patterns.append(BinOp('*', Var('n'), Const(k)))
+            trivial_patterns.append(BinOp('+', Var('n'), Const(k)))
+
+        for pattern in trivial_patterns:
+            pattern_sig = behavioral_signature(pattern)
+            if len(sig) == len(pattern_sig):
+                if all(abs(v1 - v2) < 0.01 for v1, v2 in zip(sig, pattern_sig)):
+                    return True
 
         return False
 
@@ -396,13 +546,20 @@ class PrimitiveLibrary:
     def _suggest_pattern_name(self, gen_expr: Any, params: List[str]) -> str:
         """Suggest a name for a generalized pattern.
 
+        Uses LLM if available, otherwise falls back to operator-based naming.
+
         Examples:
             (n*k) with params=['k'] -> 'scale'
             (n^k) with params=['k'] -> 'power'
             (n+k) with params=['k'] -> 'add'
         """
+        # Try LLM first
+        llm_name = suggest_name_via_llm(gen_expr, f"Generalized pattern with params {params}")
+        if llm_name:
+            return llm_name
+
+        # Fallback to operator-based naming
         if isinstance(gen_expr, BinOp):
-            # Map operators to readable names
             op_names = {
                 '*': 'scale',
                 '^': 'power',
@@ -460,6 +617,8 @@ class PrimitiveLibrary:
         """Try to add a primitive, generalizing if possible.
 
         Instead of saving n*2, tries to save n*k as a general pattern.
+        Degenerate expressions (single-term loops, unused loop vars) are
+        simplified before saving.
 
         Args:
             name: Name for the primitive. If None and expression is generalized,
@@ -470,6 +629,12 @@ class PrimitiveLibrary:
         Returns:
             (was_added, message) - whether added and explanation
         """
+        # Simplify first (removes no-ops like single-term loops)
+        simplified = simplify(expr)
+        if repr(simplified) != repr(expr):
+            # Expression was simplified - use the simpler form
+            expr = simplified
+
         # Check if already covered by general primitive
         covering = self.is_covered_by_general_primitive(expr)
         if covering:

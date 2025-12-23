@@ -401,19 +401,30 @@ class TestGeneralization:
         assert 'Covered' in msg or 'pattern' in msg.lower()
 
     def test_add_with_generalization_auto_naming(self, empty_tool_library):
-        """When name is None, suggest name based on pattern."""
-        # n*2 with name=None should become 'scale'
+        """When name is None, suggest name based on pattern (uses LLM if available)."""
+        # n*2 with name=None should get an auto-generated name
         expr1 = BinOp('*', Var('n'), Const(2))
         added1, msg1 = empty_tool_library.add_with_generalization(None, expr1, 1.0)
         assert added1
-        assert 'scale' in msg1
-        tool1 = empty_tool_library.get('scale')
+        assert 'Generalized' in msg1
+
+        # The name should be in the library (extract it from the message)
+        # Message format: "Generalized to (n*k) as 'name'"
+        import re
+        match = re.search(r"as '(\w+)'", msg1)
+        assert match, f"Could not find name in message: {msg1}"
+        name1 = match.group(1)
+        tool1 = empty_tool_library.get(name1)
         assert tool1 is not None
 
-        # n^3 with name=None should become 'power'
+        # n^3 with name=None should also get an auto-generated name
         expr2 = BinOp('^', Var('n'), Const(3))
         added2, msg2 = empty_tool_library.add_with_generalization(None, expr2, 1.0)
         assert added2
-        assert 'power' in msg2
-        tool2 = empty_tool_library.get('power')
+        assert 'Generalized' in msg2
+
+        match2 = re.search(r"as '(\w+)'", msg2)
+        assert match2, f"Could not find name in message: {msg2}"
+        name2 = match2.group(1)
+        tool2 = empty_tool_library.get(name2)
         assert tool2 is not None
