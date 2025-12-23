@@ -83,7 +83,7 @@ def evolve_with_simplicity(
 
             # Show new best in verbose mode
             if verbose:
-                reporter.on_new_best(best_ever, best_accuracy, gen)
+                reporter.on_new_best(best_ever, best_accuracy, gen, simplicity_weight)
 
         if verbose and gen % 20 == 0:
             reporter.on_generation_update(gen, scores[0][2])
@@ -91,7 +91,7 @@ def evolve_with_simplicity(
         # Check for solved with good simplicity
         if scores[0][1] >= 0.99:
             if verbose:
-                reporter.on_solved(scores[0][0], scores[0][1], gen)
+                reporter.on_solved(scores[0][0], scores[0][1], gen, simplicity_weight)
             return scores[0][0], scores[0][1], scores[0][2]
 
         # Selection and reproduction
@@ -166,7 +166,7 @@ def compare_with_without_simplicity(
     # Show the best (simplest) solution found with simplicity pressure
     best_result = min(results_simp, key=lambda r: r[2])  # Lowest complexity
     if best_result[1] >= 0.99:  # If it solved the problem
-        reporter.on_solved(best_result[0], best_result[1], 0)
+        reporter.on_solved(best_result[0], best_result[1], 0, simplicity_weight=0.3)
 
 
 def main():

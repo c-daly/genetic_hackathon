@@ -70,7 +70,7 @@ class Reporter:
         if self.verbosity >= Verbosity.VERBOSE:
             self.console.print(f"Generation {generation}: best fitness = {best_fitness:.4f}")
 
-    def on_new_best(self, expr: Any, fitness: float, generation: int) -> None:
+    def on_new_best(self, expr: Any, fitness: float, generation: int, simplicity_weight: float = None) -> None:
         """
         Report when a new best solution is found.
 
@@ -78,6 +78,7 @@ class Reporter:
             expr: The expression representing the new best
             fitness: Fitness score
             generation: Generation where it was found
+            simplicity_weight: Simplicity weight used (if any)
         """
         if self.verbosity < Verbosity.NORMAL:
             return
@@ -93,6 +94,8 @@ class Reporter:
         table.add_row("Generation", str(generation))
         table.add_row("Fitness", f"{fitness:.4f}")
         table.add_row("Complexity", str(expr.complexity()))
+        if simplicity_weight is not None:
+            table.add_row("Simplicity Weight", f"{simplicity_weight:.2f}")
 
         self.console.print()
         self.console.print(Panel(
@@ -103,7 +106,7 @@ class Reporter:
 
         self._print_expression("Expression", expr, rendered)
 
-    def on_solved(self, expr: Any, fitness: float, generation: int) -> None:
+    def on_solved(self, expr: Any, fitness: float, generation: int, simplicity_weight: float = None) -> None:
         """
         Report when problem is solved (always shown).
 
@@ -111,6 +114,7 @@ class Reporter:
             expr: The solution expression
             fitness: Fitness score (should be 1.0 or near)
             generation: Generation where solution was found
+            simplicity_weight: Simplicity weight used (if any)
         """
         # Always show solved message regardless of verbosity
         rendered = self._render_expression(expr)
@@ -123,6 +127,8 @@ class Reporter:
         table.add_row("Generation", str(generation))
         table.add_row("Fitness", f"{fitness:.4f}")
         table.add_row("Complexity", str(expr.complexity()))
+        if simplicity_weight is not None:
+            table.add_row("Simplicity Weight", f"{simplicity_weight:.2f}")
 
         self.console.print()
         self.console.print(Panel(
