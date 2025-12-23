@@ -32,10 +32,13 @@ def evolve(
     survivor_fraction: float = 0.2,
     verbose: bool = True,
     report_interval: int = 20,
-    simplicity_weight: float = 0.1,
     reporter: Any | None = None,
 ) -> EvolutionResult:
     """Run genetic programming evolution.
+
+    Two-phase approach:
+    1. Evolve to find a correct solution (accuracy >= stop_at_fitness)
+    2. Continue for 10 more generations, keeping only simpler solutions that are still correct
 
     Args:
         fitness_fn: Function that takes a callable f(n) -> float and returns fitness [0, 1]
@@ -50,13 +53,11 @@ def evolve(
         survivor_fraction: Fraction of population that survives to reproduce
         verbose: Print progress updates
         report_interval: Generations between progress reports
-        simplicity_weight: Weight for simplicity in selection (0-1). Higher values prefer simpler solutions.
         reporter: Optional reporter for progress tracking
 
     Returns:
         EvolutionResult with best expression and metadata
     """
-    import math
     if vars_available is None:
         vars_available = ['n']
 
@@ -77,42 +78,33 @@ def evolve(
 
     for gen in range(generations):
         # Evaluate population
-        scores: List[Tuple[Any, float, float]] = []  # (expr, accuracy, selection_score)
+        scores: List[Tuple[Any, float]] = []  # (expr, accuracy)
         for expr in population:
             # Wrap expression evaluation in a callable for fitness function
             accuracy = fitness_fn(lambda n, e=expr: e.eval({'n': n}))
+            scores.append((expr, accuracy))
 
-            # Calculate simplicity bonus (exponential decay with complexity)
-            complexity = expr.complexity()
-            simplicity = math.exp(-complexity / 10.0)
-
-            # Combined selection score (but track accuracy separately)
-            selection_score = accuracy * (1 - simplicity_weight) + simplicity * simplicity_weight
-
-            scores.append((expr, accuracy, selection_score))
-
-            # Collect solutions above threshold (by accuracy, not selection score)
+            # Collect solutions above threshold
             if collect_solutions_above is not None and accuracy > collect_solutions_above:
                 all_solutions.append((expr, accuracy))
 
-        # Sort by selection score (descending) - prefers accurate AND simple
-        scores.sort(key=lambda x: x[2], reverse=True)
+        # Sort by accuracy (descending), then by complexity (ascending) as tiebreaker
+        scores.sort(key=lambda x: (-x[1], x[0].complexity()))
 
         # Show sample of what we're trying (every 10 generations in verbose mode)
         if reporter and gen % 10 == 0 and hasattr(reporter, 'on_population_sample'):
-            # Pick diverse sample: best, median, and a random
+            # Pick diverse sample: best, median, and worst
             sample_indices = [0, len(scores) // 2, -1]
-            sample = [(scores[i][0], scores[i][1]) for i in sample_indices if i < len(scores)]
+            sample = [scores[i] for i in sample_indices if i < len(scores)]
             reporter.on_population_sample(gen, sample)
 
-        # Track best by accuracy (the actual fitness)
-        best_accuracy_this_gen = max(s[1] for s in scores)
+        # Track best by accuracy
+        best_accuracy_this_gen = max(a for _, a in scores)
         if best_accuracy_this_gen > best_fitness:
-            # Find simplest expression with best accuracy
-            best_exprs = [(e, a, s) for e, a, s in scores if a == best_accuracy_this_gen]
-            best_exprs.sort(key=lambda x: x[0].complexity())
+            # Find simplest expression with best accuracy (already sorted by complexity as tiebreaker)
+            best_exprs = [(e, a) for e, a in scores if a == best_accuracy_this_gen]
             best_fitness = best_accuracy_this_gen
-            best_ever = best_exprs[0][0]
+            best_ever = best_exprs[0][0]  # First one is simplest due to sort
 
             # Emit new best event
             if reporter:
@@ -120,29 +112,29 @@ def evolve(
 
         # Report progress
         if verbose and (gen % report_interval == 0 or best_accuracy_this_gen >= stop_at_fitness):
-            avg_accuracy = sum(a for _, a, _ in scores) / len(scores)
-            top_expr, top_acc, _ = scores[0]
+            avg_accuracy = sum(a for _, a in scores) / len(scores)
+            top_expr, top_acc = scores[0]
             print(f"Gen {gen:3d}: Best={top_acc:.3f} Avg={avg_accuracy:.3f} Complexity={top_expr.complexity()}")
 
         # Emit generation update event
         if reporter and (gen % report_interval == 0 or best_accuracy_this_gen >= stop_at_fitness):
             reporter.on_generation_update(gen, best_accuracy_this_gen)
 
-        # Call generation hook (pass accuracy scores for compatibility)
+        # Call generation hook
         if on_generation is not None:
-            compat_scores = [(e, a) for e, a, _ in scores]
-            on_generation(gen, compat_scores)
+            on_generation(gen, scores)
 
-        # Check if solved (by accuracy)
-        # Continue for a few more generations to find simpler solutions
+        # Check if solved - continue for more generations to find simpler solutions
         if best_accuracy_this_gen >= stop_at_fitness:
             # Find simplest expression with target accuracy in this generation
-            solved_exprs = [(e, a) for e, a, _ in scores if a >= stop_at_fitness]
+            solved_exprs = [(e, a) for e, a in scores if a >= stop_at_fitness]
             if solved_exprs:
-                solved_exprs.sort(key=lambda x: x[0].complexity())
+                # Already sorted by complexity as tiebreaker
                 simplest = solved_exprs[0][0]
                 if best_ever is None or simplest.complexity() < best_ever.complexity():
                     best_ever = simplest
+                    if reporter and hasattr(reporter, 'on_thought'):
+                        reporter.on_thought("Found simpler solution", f"{simplest} (complexity {simplest.complexity()})")
 
             # Track when we first solved
             if first_solved_gen is None:
@@ -163,9 +155,9 @@ def evolve(
                     all_solutions=all_solutions,
                 )
 
-        # Selection - keep top performers by selection score (accurate AND simple)
+        # Selection - keep top performers by accuracy (simpler ones win ties)
         num_survivors = max(1, int(pop_size * survivor_fraction))
-        survivors = [expr for expr, _, _ in scores[:num_survivors]]
+        survivors = [expr for expr, _ in scores[:num_survivors]]
 
         # Breed next generation
         next_pop = survivors.copy()
@@ -189,39 +181,3 @@ def evolve(
     )
 
 
-def evolve_with_simplicity(
-    fitness_fn: Callable[[Callable[[int], float]], float],
-    simplicity_weight: float = 0.3,
-    **kwargs,
-) -> EvolutionResult:
-    """Evolution with simplicity pressure.
-
-    Fitness = accuracy * (1 - simplicity_weight) + simplicity * simplicity_weight
-
-    Args:
-        fitness_fn: Base fitness function (accuracy)
-        simplicity_weight: Weight for simplicity in combined fitness (0-1)
-        **kwargs: Additional arguments passed to evolve()
-
-    Returns:
-        EvolutionResult
-    """
-    import math
-
-    def combined_fitness(func: Callable[[int], float], expr: Any = None) -> float:
-        accuracy = fitness_fn(func)
-
-        # Get expression from closure if not provided
-        # This is a bit hacky but necessary for the current interface
-        if expr is None:
-            return accuracy
-
-        complexity = expr.complexity()
-        simplicity = math.exp(-complexity / 10.0)
-
-        return accuracy * (1 - simplicity_weight) + simplicity * simplicity_weight
-
-    # Note: This doesn't quite work with current interface since we can't pass expr
-    # to fitness_fn. Would need to refactor to support this properly.
-    # For now, just use regular evolve
-    return evolve(fitness_fn, **kwargs)
