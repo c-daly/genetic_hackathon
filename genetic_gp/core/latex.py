@@ -42,7 +42,8 @@ def _const_to_latex(expr: Const) -> str:
     """Convert a constant to LaTeX."""
     if expr.val == int(expr.val):
         return str(int(expr.val))
-    return str(expr.val)
+    # Round floats to 2 decimal places for cleaner display
+    return str(round(expr.val, 2))
 
 
 def _var_to_latex(expr: Var) -> str:
