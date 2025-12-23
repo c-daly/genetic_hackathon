@@ -393,6 +393,27 @@ class PrimitiveLibrary:
         """Deprecated: Use is_covered_by_general_primitive() instead."""
         return self.is_covered_by_general_primitive(expr)
 
+    def _suggest_pattern_name(self, gen_expr: Any, params: List[str]) -> str:
+        """Suggest a name for a generalized pattern.
+
+        Examples:
+            (n*k) with params=['k'] -> 'scale'
+            (n^k) with params=['k'] -> 'power'
+            (n+k) with params=['k'] -> 'add'
+        """
+        if isinstance(gen_expr, BinOp):
+            # Map operators to readable names
+            op_names = {
+                '*': 'scale',
+                '^': 'power',
+                '+': 'add',
+                '-': 'subtract',
+                '/': 'divide',
+            }
+            return op_names.get(gen_expr.op, f"pattern_{gen_expr.op}")
+
+        return "pattern"
+
     def try_generalize(self, expr: Any) -> tuple[Any, List[str], Dict[str, float]] | None:
         """Try to generalize an expression by extracting parameters.
 
@@ -435,10 +456,16 @@ class PrimitiveLibrary:
 
         return True
 
-    def add_with_generalization(self, name: str, expr: Any, fitness: float) -> tuple[bool, str]:
+    def add_with_generalization(self, name: str | None, expr: Any, fitness: float) -> tuple[bool, str]:
         """Try to add a primitive, generalizing if possible.
 
         Instead of saving n*2, tries to save n*k as a general pattern.
+
+        Args:
+            name: Name for the primitive. If None and expression is generalized,
+                  a name is suggested based on the pattern (e.g., 'scale', 'power').
+            expr: The expression to potentially save
+            fitness: Fitness score (must be >= 0.99 to save)
 
         Returns:
             (was_added, message) - whether added and explanation
@@ -457,10 +484,13 @@ class PrimitiveLibrary:
                 if primitive.params == params and repr(primitive.expr) == repr(gen_expr):
                     return False, f"General pattern already exists as '{primitive.name}'"
 
+            # Use provided name or suggest one based on pattern
+            primitive_name = name if name else self._suggest_pattern_name(gen_expr, params)
+
             # Create generalized primitive
             sig = behavioral_signature(expr)  # Use original signature
             primitive = DerivedPrimitive(
-                name=name,
+                name=primitive_name,
                 expr=gen_expr,
                 signature=sig,
                 params=params,
@@ -468,12 +498,15 @@ class PrimitiveLibrary:
             )
             added = self.add(primitive)
             if added:
-                return True, f"Generalized to {gen_expr} with params {params}"
+                return True, f"Generalized to {gen_expr} as '{primitive_name}'"
             return False, "General primitive not added (equivalent exists)"
 
         # Not generalizable - add as-is if novel
         if not self.should_save(expr, fitness):
             return False, "Expression not novel or trivial"
+
+        if not name:
+            return False, "Name required for non-generalizable expressions"
 
         sig = behavioral_signature(expr)
         primitive = DerivedPrimitive(name=name, expr=expr, signature=sig)

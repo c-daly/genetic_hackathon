@@ -39,11 +39,13 @@ def run_primitive_accumulation_demo():
     print("  3. Watch for: primitive usage, generalization, simplification")
     print()
 
+    # Use None for primitive_name to let library suggest names for generalized patterns
+    # Use specific names for non-generalizable patterns like sum_to_n
     problems = [
-        ("double", "f(n) = 2n", test_double),
-        ("square", "f(n) = n²", test_square),
-        ("sum_to_n", "f(n) = 1+2+...+n", test_sum_to_n),
-        ("cube", "f(n) = n³", test_cube),
+        (None, "f(n) = 2n", test_double),       # Will become 'scale' (n*k)
+        (None, "f(n) = n²", test_square),       # Will become 'power' (n^k)
+        ("sum_to_n", "f(n) = 1+2+...+n", test_sum_to_n),  # Summation pattern
+        (None, "f(n) = n³", test_cube),         # Covered by 'power'
     ]
 
     for primitive_name, problem_name, fitness_fn in problems:

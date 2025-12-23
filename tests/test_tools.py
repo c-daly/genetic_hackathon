@@ -382,7 +382,7 @@ class TestGeneralization:
         assert 'Generalized' in msg
         assert 'n*k' in msg or "(n*k)" in msg
 
-        # Check the tool was stored with params
+        # Check the tool was stored with provided name
         tool = empty_tool_library.get('mult')
         assert tool is not None
         assert tool.params == ['k']
@@ -399,3 +399,21 @@ class TestGeneralization:
         added2, msg = empty_tool_library.add_with_generalization('triple', expr2, 1.0)
         assert not added2
         assert 'Covered' in msg or 'pattern' in msg.lower()
+
+    def test_add_with_generalization_auto_naming(self, empty_tool_library):
+        """When name is None, suggest name based on pattern."""
+        # n*2 with name=None should become 'scale'
+        expr1 = BinOp('*', Var('n'), Const(2))
+        added1, msg1 = empty_tool_library.add_with_generalization(None, expr1, 1.0)
+        assert added1
+        assert 'scale' in msg1
+        tool1 = empty_tool_library.get('scale')
+        assert tool1 is not None
+
+        # n^3 with name=None should become 'power'
+        expr2 = BinOp('^', Var('n'), Const(3))
+        added2, msg2 = empty_tool_library.add_with_generalization(None, expr2, 1.0)
+        assert added2
+        assert 'power' in msg2
+        tool2 = empty_tool_library.get('power')
+        assert tool2 is not None
