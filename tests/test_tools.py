@@ -203,19 +203,24 @@ class TestTrivialDetection:
         expr = BinOp('+', Const(5), Var('n'))
         assert empty_tool_library.is_trivial(expr)
 
-    def test_binop_with_two_vars_not_trivial(self, empty_tool_library):
-        """Binary ops with two variables are NOT trivial (valid patterns).
+    def test_binop_same_var_is_trivial(self, empty_tool_library):
+        """Binary ops with same variable twice are trivial.
 
-        n*n (squaring) and n+n (doubling) are valid patterns that
-        don't have a constant to generalize. They should be saveable.
+        These are just primitives applied to the same argument:
+        n + n = add(n, n), n * n = multiply(n, n), etc.
+        Not novel patterns worth saving.
         """
-        # n + n - valid doubling pattern
+        # n + n = add(n, n)
         expr = BinOp('+', Var('n'), Var('n'))
-        assert not empty_tool_library.is_trivial(expr)
+        assert empty_tool_library.is_trivial(expr)
 
-        # n * n - valid squaring pattern
+        # n * n = multiply(n, n)
         expr = BinOp('*', Var('n'), Var('n'))
-        assert not empty_tool_library.is_trivial(expr)
+        assert empty_tool_library.is_trivial(expr)
+
+        # n ^ n = power(n, n)
+        expr = BinOp('^', Var('n'), Var('n'))
+        assert empty_tool_library.is_trivial(expr)
 
     def test_nested_binop_not_trivial(self, empty_tool_library):
         """Nested binary ops are not trivial."""

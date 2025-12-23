@@ -231,24 +231,28 @@ class ToolLibrary:
         For example, we don't want to save n*2, n*3, n*4 as separate tools -
         instead we want to recognize these as instances of the general pattern n*k.
 
-        BUT: Simple correct solutions like n*n or n+n ARE valid tools if they
-        don't generalize to a pattern with a constant parameter.
-
         Returns:
-            True if expression is too simple to save (constants, variables only)
+            True if expression is too simple to save
         """
         # Constants and variables are trivial
         if isinstance(expr, (Const, Var)):
             return True
 
-        # Simple binops with a constant (like n*2, n+5) should be generalized
-        # But binops with two variables (like n*n, n+n) are valid patterns
         if isinstance(expr, BinOp):
             left_is_const = isinstance(expr.left, Const)
             right_is_const = isinstance(expr.right, Const)
-            # Only trivial if it has a constant that could be generalized
+            left_is_var = isinstance(expr.left, Var)
+            right_is_var = isinstance(expr.right, Var)
+
+            # n OP const or const OP n - should generalize to n OP k
             if (left_is_const or right_is_const) and not (left_is_const and right_is_const):
-                # n OP const or const OP n - should generalize
+                return True
+
+            # var OP var with same variable - all are trivial
+            # These are just primitives applied to the same argument:
+            # n + n = add(n, n), n * n = multiply(n, n), etc.
+            # Not novel patterns worth saving.
+            if left_is_var and right_is_var and expr.left.name == expr.right.name:
                 return True
 
         return False
