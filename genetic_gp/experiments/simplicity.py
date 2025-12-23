@@ -23,26 +23,25 @@ import random
 
 def evolve_with_simplicity(
     fitness_fn: Callable,
-    simplicity_weight: float = 0.3,
+    simplicity_weight: float = 0.1,
     pop_size: int = 60,
     generations: int = 80,
     verbose: bool = None,
 ) -> tuple:
-    """Evolution with combined accuracy and simplicity pressure.
+    """Two-phase evolution: first find solution, then simplify.
 
-    Combined fitness = accuracy * (1 - w) + simplicity * w
-
-    Where simplicity = exp(-complexity / 10)
+    Phase 1: Evolve until a correct solution is found (accuracy >= 0.99)
+    Phase 2: Continue evolving, but only accept simpler solutions that are still correct
 
     Args:
         fitness_fn: Base fitness function (accuracy)
-        simplicity_weight: Weight for simplicity (0-1)
+        simplicity_weight: Weight for simplicity in selection (0-1)
         pop_size: Population size
         generations: Max generations
         verbose: Print progress (None = use config)
 
     Returns:
-        (best_expression, accuracy, combined_fitness)
+        (best_expression, accuracy, complexity)
     """
     reporter = get_reporter()
     config = get_config()
@@ -53,49 +52,68 @@ def evolve_with_simplicity(
     population = [random_expr(0, 3, ['n']) for _ in range(pop_size)]
 
     best_ever = None
-    best_combined = 0.0
     best_accuracy = 0.0
+    best_complexity = float('inf')
+    solved = False
+    solved_gen = None
 
     for gen in range(generations):
         scores = []
 
         for expr in population:
-            # Accuracy component
             accuracy = fitness_fn(lambda n, e=expr: e.eval({'n': n}))
-
-            # Simplicity component
             complexity = expr.complexity()
+
+            # Simplicity score (higher = simpler)
             simplicity = math.exp(-complexity / 10.0)
 
-            # Combined fitness
+            # Combined score for selection
             combined = accuracy * (1 - simplicity_weight) + simplicity * simplicity_weight
 
-            scores.append((expr, accuracy, combined))
+            scores.append((expr, accuracy, complexity, combined))
 
         # Sort by combined fitness
-        scores.sort(key=lambda x: x[2], reverse=True)
+        scores.sort(key=lambda x: x[3], reverse=True)
 
-        # Track best
-        if scores[0][2] > best_combined:
-            best_combined = scores[0][2]
-            best_accuracy = scores[0][1]
-            best_ever = scores[0][0]
+        # Track best by accuracy first, then simplicity
+        top_expr, top_acc, top_complexity, _ = scores[0]
 
-            # Show new best in verbose mode
-            if verbose:
-                reporter.on_new_best(best_ever, best_accuracy, gen, simplicity_weight)
+        if not solved:
+            # Phase 1: Looking for any correct solution
+            if top_acc > best_accuracy:
+                best_accuracy = top_acc
+                best_ever = top_expr
+                best_complexity = top_complexity
+
+                if verbose:
+                    reporter.on_new_best(best_ever, best_accuracy, gen, simplicity_weight)
+
+            if top_acc >= 0.99:
+                solved = True
+                solved_gen = gen
+                if verbose:
+                    reporter.on_solved(best_ever, best_accuracy, gen, simplicity_weight)
+        else:
+            # Phase 2: Found solution, now look for simpler equivalent
+            # Only update if still correct AND simpler
+            if top_acc >= 0.99 and top_complexity < best_complexity:
+                best_ever = top_expr
+                best_accuracy = top_acc
+                best_complexity = top_complexity
+
+                if verbose:
+                    reporter.on_new_best(best_ever, best_accuracy, gen, simplicity_weight)
 
         if verbose and gen % 20 == 0:
-            reporter.on_generation_update(gen, scores[0][2])
+            status = "simplifying" if solved else "searching"
+            reporter.on_generation_update(gen, scores[0][3])
 
-        # Check for solved with good simplicity
-        if scores[0][1] >= 0.99:
-            if verbose:
-                reporter.on_solved(scores[0][0], scores[0][1], gen, simplicity_weight)
-            return scores[0][0], scores[0][1], scores[0][2]
+        # Stop if we've been simplifying for a while with no improvement
+        if solved and gen > solved_gen + 10:
+            break
 
         # Selection and reproduction
-        survivors = [e for e, _, _ in scores[:pop_size // 5]]
+        survivors = [e for e, _, _, _ in scores[:pop_size // 5]]
         next_pop = survivors.copy()
         while len(next_pop) < pop_size:
             parent = random.choice(survivors)
@@ -103,7 +121,7 @@ def evolve_with_simplicity(
             next_pop.append(child)
         population = next_pop
 
-    return best_ever, best_accuracy, best_combined
+    return best_ever, best_accuracy, best_complexity
 
 
 def compare_with_without_simplicity(
@@ -121,11 +139,16 @@ def compare_with_without_simplicity(
     reporter = get_reporter()
     reporter.on_problem_started(
         problem_name,
-        "Comparing evolution with and without simplicity pressure"
+        "Does simplicity pressure help find simpler solutions?"
     )
 
+    print("\n  Goal: Compare solutions found WITH vs WITHOUT simplicity pressure")
+    print("  Formula: fitness = accuracy × (1-weight) + simplicity × weight")
+    print("  Higher weight = more pressure toward simpler expressions\n")
+
     # Without simplicity pressure
-    print("\n--- Without simplicity pressure (weight=0.0) ---")
+    print("  BASELINE: Optimize accuracy only (weight=0.0)")
+    print("  " + "-" * 50)
     results_no_simp = []
     for i in range(num_runs):
         expr, acc, _ = evolve_with_simplicity(
@@ -133,13 +156,14 @@ def compare_with_without_simplicity(
             simplicity_weight=0.0,
         )
         results_no_simp.append((expr, acc, expr.complexity()))
-        print(f"  Run {i+1}: Accuracy={acc:.3f} Complexity={expr.complexity()}")
+        print(f"    Run {i+1}: Accuracy={acc:.3f} Complexity={expr.complexity()}")
 
     avg_complexity_no = sum(r[2] for r in results_no_simp) / num_runs
     avg_accuracy_no = sum(r[1] for r in results_no_simp) / num_runs
 
     # With simplicity pressure
-    print("\n--- With simplicity pressure (weight=0.3) ---")
+    print("\n  EXPERIMENT: Add simplicity pressure (weight=0.3)")
+    print("  " + "-" * 50)
     results_simp = []
     for i in range(num_runs):
         expr, acc, _ = evolve_with_simplicity(
@@ -147,21 +171,22 @@ def compare_with_without_simplicity(
             simplicity_weight=0.3,
         )
         results_simp.append((expr, acc, expr.complexity()))
-        print(f"  Run {i+1}: Accuracy={acc:.3f} Complexity={expr.complexity()}")
+        print(f"    Run {i+1}: Accuracy={acc:.3f} Complexity={expr.complexity()}")
 
     avg_complexity_simp = sum(r[2] for r in results_simp) / num_runs
     avg_accuracy_simp = sum(r[1] for r in results_simp) / num_runs
 
     # Summary
-    print(f"\nSummary (averaged over {num_runs} runs):")
-    print(f"  Without simplicity: Accuracy={avg_accuracy_no:.3f} "
-          f"Avg Complexity={avg_complexity_no:.1f}")
-    print(f"  With simplicity:    Accuracy={avg_accuracy_simp:.3f} "
-          f"Avg Complexity={avg_complexity_simp:.1f}")
+    print(f"\n  RESULTS (averaged over {num_runs} runs):")
+    print("  " + "-" * 50)
+    print(f"    Baseline (weight=0.0):   Accuracy={avg_accuracy_no:.3f}  Complexity={avg_complexity_no:.1f}")
+    print(f"    Experiment (weight=0.3): Accuracy={avg_accuracy_simp:.3f}  Complexity={avg_complexity_simp:.1f}")
 
     if avg_complexity_simp < avg_complexity_no:
         reduction = (1 - avg_complexity_simp / avg_complexity_no) * 100
-        print(f"\n  -> Simplicity pressure reduced complexity by {reduction:.0f}%")
+        print(f"\n  ✓ SUCCESS: Simplicity pressure reduced complexity by {reduction:.0f}%")
+    else:
+        print(f"\n  ✗ No improvement (random variation or insufficient pressure)")
 
     # Show the best (simplest) solution found with simplicity pressure
     best_result = min(results_simp, key=lambda r: r[2])  # Lowest complexity
