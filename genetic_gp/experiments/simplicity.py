@@ -14,6 +14,7 @@ from typing import Callable
 from genetic_gp.core.expressions import Const, Var, BinOp, Sum
 from genetic_gp.core.signatures import behavioral_signature
 from genetic_gp.core.reporter import get_reporter
+from genetic_gp.core.config import get_config, Verbosity
 from genetic_gp.evolution.generator import random_expr
 from genetic_gp.evolution.mutation import mutate
 from genetic_gp.problems.math import test_double, test_square, test_sum_to_n
@@ -25,7 +26,7 @@ def evolve_with_simplicity(
     simplicity_weight: float = 0.3,
     pop_size: int = 60,
     generations: int = 80,
-    verbose: bool = True,
+    verbose: bool = None,
 ) -> tuple:
     """Evolution with combined accuracy and simplicity pressure.
 
@@ -38,12 +39,17 @@ def evolve_with_simplicity(
         simplicity_weight: Weight for simplicity (0-1)
         pop_size: Population size
         generations: Max generations
-        verbose: Print progress
+        verbose: Print progress (None = use config)
 
     Returns:
         (best_expression, accuracy, combined_fitness)
     """
     reporter = get_reporter()
+    config = get_config()
+
+    # Use config verbosity if not explicitly set
+    if verbose is None:
+        verbose = config.output.verbosity_level >= Verbosity.VERBOSE
     population = [random_expr(0, 3, ['n']) for _ in range(pop_size)]
 
     best_ever = None
@@ -125,7 +131,6 @@ def compare_with_without_simplicity(
         expr, acc, _ = evolve_with_simplicity(
             fitness_fn,
             simplicity_weight=0.0,
-            verbose=False,
         )
         results_no_simp.append((expr, acc, expr.complexity()))
         print(f"  Run {i+1}: Accuracy={acc:.3f} Complexity={expr.complexity()}")
@@ -140,7 +145,6 @@ def compare_with_without_simplicity(
         expr, acc, _ = evolve_with_simplicity(
             fitness_fn,
             simplicity_weight=0.3,
-            verbose=False,
         )
         results_simp.append((expr, acc, expr.complexity()))
         print(f"  Run {i+1}: Accuracy={acc:.3f} Complexity={expr.complexity()}")
