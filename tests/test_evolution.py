@@ -278,6 +278,53 @@ class TestEvolutionIntegration:
         assert result.best_fitness > 0.3  # Should find something
 
 
+class TestEvolutionReporter:
+    """Tests for reporter integration."""
+
+    def test_evolve_accepts_reporter(self):
+        """Should accept optional reporter parameter."""
+        from genetic_gp.evolution.engine import evolve
+        from genetic_gp.core.reporter import Reporter
+        from genetic_gp.core.config import Verbosity
+        from genetic_gp.problems.math import test_double as fitness_double
+
+        reporter = Reporter(verbosity=Verbosity.MINIMAL, renderer="plain")
+
+        result = evolve(
+            fitness_double,
+            pop_size=20,
+            generations=10,
+            reporter=reporter,
+            verbose=False,
+        )
+
+        assert result is not None
+
+    def test_evolve_emits_events(self):
+        """Should emit events to reporter."""
+        from genetic_gp.evolution.engine import evolve
+        from genetic_gp.problems.math import test_double as fitness_double
+
+        events = []
+
+        class TestReporter:
+            def on_problem_started(self, *args): events.append(('started', args))
+            def on_new_best(self, *args): events.append(('new_best', args))
+            def on_solved(self, *args): events.append(('solved', args))
+            def on_generation_update(self, *args): events.append(('gen', args))
+
+        result = evolve(
+            fitness_double,
+            pop_size=30,
+            generations=50,
+            reporter=TestReporter(),
+            verbose=False,
+        )
+
+        assert len(events) > 0
+        assert any(e[0] == 'new_best' for e in events)
+
+
 def _collect_var_names(expr) -> set:
     """Collect all variable names used in an expression."""
     names = set()

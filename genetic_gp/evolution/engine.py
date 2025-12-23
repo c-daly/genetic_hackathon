@@ -33,6 +33,7 @@ def evolve(
     verbose: bool = True,
     report_interval: int = 20,
     simplicity_weight: float = 0.1,
+    reporter: Any | None = None,
 ) -> EvolutionResult:
     """Run genetic programming evolution.
 
@@ -50,6 +51,7 @@ def evolve(
         verbose: Print progress updates
         report_interval: Generations between progress reports
         simplicity_weight: Weight for simplicity in selection (0-1). Higher values prefer simpler solutions.
+        reporter: Optional reporter for progress tracking
 
     Returns:
         EvolutionResult with best expression and metadata
@@ -57,6 +59,10 @@ def evolve(
     import math
     if vars_available is None:
         vars_available = ['n']
+
+    # Emit problem started event
+    if reporter:
+        reporter.on_problem_started("Evolution Started", f"Population: {pop_size}, Generations: {generations}")
 
     # Initialize population with random expressions
     population = [
@@ -101,11 +107,19 @@ def evolve(
             best_fitness = best_accuracy_this_gen
             best_ever = best_exprs[0][0]
 
+            # Emit new best event
+            if reporter:
+                reporter.on_new_best(best_ever, best_fitness, gen)
+
         # Report progress
         if verbose and (gen % report_interval == 0 or best_accuracy_this_gen >= stop_at_fitness):
             avg_accuracy = sum(a for _, a, _ in scores) / len(scores)
             top_expr, top_acc, _ = scores[0]
             print(f"Gen {gen:3d}: Best={top_acc:.3f} Avg={avg_accuracy:.3f} Complexity={top_expr.complexity()}")
+
+        # Emit generation update event
+        if reporter and (gen % report_interval == 0 or best_accuracy_this_gen >= stop_at_fitness):
+            reporter.on_generation_update(gen, best_accuracy_this_gen)
 
         # Call generation hook (pass accuracy scores for compatibility)
         if on_generation is not None:
@@ -128,6 +142,9 @@ def evolve(
                 first_solved_gen = gen
                 if verbose:
                     print(f"Solved! Continuing to find simpler solutions...")
+                # Emit solved event
+                if reporter:
+                    reporter.on_solved(best_ever, best_fitness, gen)
             elif gen - first_solved_gen >= 10:  # Continue for 10 more generations
                 if verbose:
                     print(f"Final solution at generation {gen}")
