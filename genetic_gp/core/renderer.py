@@ -217,16 +217,8 @@ def render_expression(
         return render_unicode(expr)
 
     if renderer == 'sixel':
-        # Skip sixel for complex expressions - matplotlib can't render them well
-        if hasattr(expr, 'complexity') and expr.complexity() > 15:
-            return render_unicode(expr)
-
         # Convert expression to LaTeX
         latex = to_latex(expr, pretty=pretty)
-
-        # Skip if LaTeX is too long (nested expressions)
-        if len(latex) > 100:
-            return render_unicode(expr)
 
         try:
             png_bytes = render_latex_to_png(latex, font_size=font_size, dpi=dpi)
