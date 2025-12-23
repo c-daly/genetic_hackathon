@@ -7,6 +7,7 @@ from typing import Any, Callable, List, Tuple
 
 from genetic_gp.evolution.generator import random_expr
 from genetic_gp.evolution.mutation import mutate
+from genetic_gp.core.simplify import simplify
 
 
 @dataclass
@@ -174,7 +175,7 @@ def evolve(
                     if verbose:
                         print(f"Reached target complexity {best_ever.complexity()} at gen {gen}")
                     return EvolutionResult(
-                        best_expr=best_ever,
+                        best_expr=simplify(best_ever),
                         best_fitness=best_fitness,
                         generations_run=gen + 1,
                         solved=True,
@@ -184,7 +185,7 @@ def evolve(
                     if verbose:
                         print(f"Max simplify generations reached. Final complexity: {best_ever.complexity()}")
                     return EvolutionResult(
-                        best_expr=best_ever,
+                        best_expr=simplify(best_ever),
                         best_fitness=best_fitness,
                         generations_run=gen + 1,
                         solved=True,
@@ -194,7 +195,7 @@ def evolve(
                     if verbose:
                         print(f"No improvement for 10 gens. Final complexity: {best_ever.complexity()}")
                     return EvolutionResult(
-                        best_expr=best_ever,
+                        best_expr=simplify(best_ever),
                         best_fitness=best_fitness,
                         generations_run=gen + 1,
                         solved=True,
@@ -219,7 +220,7 @@ def evolve(
         print(f"Best after {generations} generations: {best_fitness:.3f}")
 
     return EvolutionResult(
-        best_expr=best_ever,
+        best_expr=simplify(best_ever) if best_ever else None,
         best_fitness=best_fitness,
         generations_run=generations,
         solved=False,
@@ -330,9 +331,9 @@ def evolve_and_save_primitive(
 
     if verbose:
         if added:
-            print(f"Saved as primitive '{primitive_name}': {reason}")
+            print(f"Saved: {reason}")
         else:
-            print(f"Not saved as primitive: {reason}")
+            print(f"Not saved: {reason}")
 
     return result
 

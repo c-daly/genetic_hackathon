@@ -4,7 +4,7 @@ from __future__ import annotations
 import random
 from typing import Any, List
 
-from genetic_gp.core.expressions import Const, Var, BinOp, Sum, Product, ToolCall
+from genetic_gp.core.expressions import Const, Var, BinOp, Sum, Product, PrimitiveCall
 
 
 def random_expr(
@@ -75,14 +75,11 @@ def _random_terminal(
     elif choice == 'var':
         return Var(random.choice(vars_available))
     elif choice == 'tool':
-        tools = tool_library.list_tools()
-        tool = random.choice(tools)
-        # Generate arguments for tool parameters
-        args = []
-        for _ in tool.params:
-            arg = random_expr(depth + 1, max_depth, vars_available, tool_library)
-            args.append(arg)
-        return ToolCall(tool.name, args, tool_library)
+        primitives = tool_library.list_primitives()
+        primitive = random.choice(primitives)
+        # Generate the input argument (typically n or an expression of n)
+        arg = random_expr(depth + 1, max_depth, vars_available, tool_library)
+        return PrimitiveCall(primitive.name, arg, tool_library)
 
     return Const(0)
 

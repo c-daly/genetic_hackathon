@@ -4,7 +4,7 @@ from __future__ import annotations
 import random
 from typing import Any, List
 
-from genetic_gp.core.expressions import Const, Var, BinOp, Sum, Product, ToolCall
+from genetic_gp.core.expressions import Const, Var, BinOp, Sum, Product, PrimitiveCall
 from genetic_gp.evolution.generator import random_expr
 
 
@@ -63,11 +63,11 @@ def mutate(
             mutate(expr.body, rate, vars_available + [expr.var], tool_library),
         )
 
-    elif isinstance(expr, ToolCall):
-        return ToolCall(
-            expr.tool_name,
-            [mutate(arg, rate, vars_available, tool_library) for arg in expr.args],
-            expr.tool_library,
+    elif isinstance(expr, PrimitiveCall):
+        return PrimitiveCall(
+            expr.primitive_name,
+            mutate(expr.arg, rate, vars_available, tool_library),
+            expr.primitive_library,
         )
 
     # Unknown type - return as-is
@@ -119,9 +119,8 @@ def _collect_subtrees(expr: Any) -> List[Any]:
         result.extend(_collect_subtrees(expr.start))
         result.extend(_collect_subtrees(expr.end))
         result.extend(_collect_subtrees(expr.body))
-    elif isinstance(expr, ToolCall):
-        for arg in expr.args:
-            result.extend(_collect_subtrees(arg))
+    elif isinstance(expr, PrimitiveCall):
+        result.extend(_collect_subtrees(expr.arg))
 
     return result
 
@@ -162,11 +161,11 @@ def _replace_random_subtree(
             _replace_random_subtree(expr.body, replacement, vars_available + [expr.var], prob),
         )
 
-    elif isinstance(expr, ToolCall):
-        return ToolCall(
-            expr.tool_name,
-            [_replace_random_subtree(arg, replacement, vars_available, prob) for arg in expr.args],
-            expr.tool_library,
+    elif isinstance(expr, PrimitiveCall):
+        return PrimitiveCall(
+            expr.primitive_name,
+            _replace_random_subtree(expr.arg, replacement, vars_available, prob),
+            expr.primitive_library,
         )
 
     return expr
