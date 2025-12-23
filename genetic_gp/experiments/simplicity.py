@@ -155,6 +155,11 @@ def compare_with_without_simplicity(
         reduction = (1 - avg_complexity_simp / avg_complexity_no) * 100
         print(f"\n  -> Simplicity pressure reduced complexity by {reduction:.0f}%")
 
+    # Show the best (simplest) solution found with simplicity pressure
+    best_result = min(results_simp, key=lambda r: r[2])  # Lowest complexity
+    if best_result[1] >= 0.99:  # If it solved the problem
+        reporter.on_solved(best_result[0], best_result[1], 0)
+
 
 def main():
     """Run simplicity-driven evolution demos."""
