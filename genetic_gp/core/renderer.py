@@ -29,10 +29,10 @@ def render_latex_to_png(latex: str, font_size: int = 14, dpi: int = 150) -> byte
     fig = plt.figure(figsize=(0.01, 0.01))
     fig.text(0, 0, f'${latex}$', fontsize=font_size)
 
-    # Save to buffer
+    # Save to buffer with white background (transparent breaks sixel)
     buf = io.BytesIO()
     fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', pad_inches=0.1,
-                transparent=True)
+                facecolor='white', edgecolor='none')
     plt.close(fig)
 
     buf.seek(0)
