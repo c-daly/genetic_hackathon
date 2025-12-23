@@ -261,39 +261,39 @@ class TestShouldSave:
         assert empty_tool_library.should_save(sum_1_to_n, fitness=1.0)
 
 
-class TestToolCallIntegration:
-    """Integration tests for ToolCall with ToolLibrary."""
+class TestPrimitiveCallIntegration:
+    """Integration tests for PrimitiveCall with PrimitiveLibrary."""
 
-    def test_tool_call_evaluation(self, tool_library_with_double):
-        """ToolCall should evaluate using the library."""
-        from genetic_gp.core.expressions import ToolCall
+    def test_primitive_call_evaluation(self, tool_library_with_double):
+        """PrimitiveCall should evaluate using the library."""
+        from genetic_gp.core.expressions import PrimitiveCall, Var
 
-        # Call the double tool
-        call = ToolCall('double', [], tool_library_with_double)
+        # Call the double primitive with n as the argument
+        call = PrimitiveCall('double', Var('n'), tool_library_with_double)
 
         # Should double the input
         result = call.eval({'n': 5})
         assert result == 10
 
-    def test_tool_call_missing_tool(self, empty_tool_library):
-        """ToolCall with missing tool should return 0."""
-        from genetic_gp.core.expressions import ToolCall
+    def test_primitive_call_missing_primitive(self, empty_tool_library):
+        """PrimitiveCall with missing primitive should return 0."""
+        from genetic_gp.core.expressions import PrimitiveCall, Var
 
-        call = ToolCall('nonexistent', [], empty_tool_library)
+        call = PrimitiveCall('nonexistent', Var('n'), empty_tool_library)
         result = call.eval({'n': 5})
         assert result == 0
 
-    def test_tool_call_complexity(self, tool_library_with_double):
-        """ToolCall complexity should be base + args."""
-        from genetic_gp.core.expressions import ToolCall
+    def test_primitive_call_complexity(self, tool_library_with_double):
+        """PrimitiveCall complexity should be base + arg complexity."""
+        from genetic_gp.core.expressions import PrimitiveCall, Var
 
-        # No args: complexity = 2
-        call = ToolCall('double', [], tool_library_with_double)
-        assert call.complexity() == 2
+        # With Var('n'): complexity = 2 (base) + 1 (var) = 3
+        call = PrimitiveCall('double', Var('n'), tool_library_with_double)
+        assert call.complexity() == 3
 
-        # With arg: complexity = 2 + arg_complexity
-        call_with_arg = ToolCall('double', [Const(5)], tool_library_with_double)
-        assert call_with_arg.complexity() == 3  # 2 + 1
+        # With Const: complexity = 2 (base) + 1 (const) = 3
+        call_with_const = PrimitiveCall('double', Const(5), tool_library_with_double)
+        assert call_with_const.complexity() == 3
 
 
 class TestGeneralization:

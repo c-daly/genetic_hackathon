@@ -1,7 +1,7 @@
 """LaTeX conversion for mathematical expressions."""
 
 from typing import Any
-from genetic_gp.core.expressions import Const, Var, BinOp, Sum, Product, ToolCall
+from genetic_gp.core.expressions import Const, Var, BinOp, Sum, Product, PrimitiveCall
 
 
 def to_latex(expr: Any, pretty: bool = True) -> str:
@@ -26,8 +26,8 @@ def to_latex(expr: Any, pretty: bool = True) -> str:
         latex = _sum_to_latex(expr, pretty)
     elif isinstance(expr, Product):
         latex = _product_to_latex(expr, pretty)
-    elif isinstance(expr, ToolCall):
-        latex = _toolcall_to_latex(expr, pretty)
+    elif isinstance(expr, PrimitiveCall):
+        latex = _primitivecall_to_latex(expr, pretty)
     else:
         latex = str(expr)
 
@@ -89,10 +89,10 @@ def _product_to_latex(expr: Product, pretty: bool) -> str:
     return f"\\prod_{{{var}={start_latex}}}^{{{end_latex}}} {body_latex}"
 
 
-def _toolcall_to_latex(expr: ToolCall, pretty: bool) -> str:
-    """Convert a tool call to LaTeX."""
-    args_latex = ', '.join(to_latex(arg, pretty) for arg in expr.args)
-    return f"\\text{{{expr.tool_name}}}({args_latex})"
+def _primitivecall_to_latex(expr: PrimitiveCall, pretty: bool) -> str:
+    """Convert a primitive call to LaTeX."""
+    arg_latex = to_latex(expr.arg, pretty) if hasattr(expr.arg, 'eval') else str(expr.arg)
+    return f"\\text{{{expr.primitive_name}}}({arg_latex})"
 
 
 def _apply_pretty_rules(expr: Any, latex: str) -> str:

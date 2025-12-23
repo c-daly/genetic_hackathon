@@ -227,18 +227,18 @@ def evolve(
     )
 
 
-def _count_tool_usage(expr: Any) -> dict:
-    """Count how many times each tool is used in an expression."""
-    from genetic_gp.core.expressions import ToolCall
+def _count_primitive_usage(expr: Any) -> dict:
+    """Count how many times each derived primitive is used in an expression."""
+    from genetic_gp.core.expressions import PrimitiveCall
 
     counts = {}
 
     def count_recursive(e):
-        if isinstance(e, ToolCall):
-            tool_name = e.tool_name
-            counts[tool_name] = counts.get(tool_name, 0) + 1
-            for arg in e.args:
-                count_recursive(arg)
+        if isinstance(e, PrimitiveCall):
+            name = e.primitive_name
+            counts[name] = counts.get(name, 0) + 1
+            if hasattr(e, 'arg'):
+                count_recursive(e.arg)
         elif hasattr(e, 'left'):
             count_recursive(e.left)
             count_recursive(e.right)
@@ -253,20 +253,24 @@ def _count_tool_usage(expr: Any) -> dict:
     return counts
 
 
-def evolve_and_save_tool(
+# Backwards compatibility
+_count_tool_usage = _count_primitive_usage
+
+
+def evolve_and_save_primitive(
     fitness_fn: Callable[[Callable[[int], float]], float],
-    tool_library: Any,
-    tool_name: str,
+    primitive_library: Any,
+    primitive_name: str,
     reporter: Any | None = None,
     verbose: bool = True,
     **kwargs,
 ) -> EvolutionResult:
-    """Evolve a solution and try to save it as a tool.
+    """Evolve a solution and try to save it as a derived primitive.
 
     Args:
         fitness_fn: Fitness function
-        tool_library: ToolLibrary to save to
-        tool_name: Name for the tool if saved
+        primitive_library: PrimitiveLibrary to save to
+        primitive_name: Name for the primitive if saved
         reporter: Optional reporter for progress
         verbose: Print progress
         **kwargs: Additional args for evolve()
@@ -274,14 +278,14 @@ def evolve_and_save_tool(
     Returns:
         EvolutionResult
     """
-    # Show existing tools
-    if verbose and len(tool_library) > 0:
-        print(f"\nAvailable tools: {[t.name for t in tool_library.list_tools()]}")
+    # Show existing primitives
+    if verbose and len(primitive_library) > 0:
+        print(f"\nAvailable primitives: {[p.name for p in primitive_library.list_primitives()]}")
 
     # Evolve
     result = evolve(
         fitness_fn,
-        tool_library=tool_library,
+        tool_library=primitive_library,  # Pass to evolve (uses tool_library param name)
         reporter=reporter,
         verbose=verbose,
         **kwargs,
@@ -289,30 +293,36 @@ def evolve_and_save_tool(
 
     if not result.solved:
         if verbose:
-            print(f"Did not solve - not saving tool")
+            print(f"Did not solve - not saving primitive")
         return result
 
-    # Check tool usage in solution
-    tool_usage = _count_tool_usage(result.best_expr)
-    if tool_usage and verbose:
-        print(f"Solution uses tools: {tool_usage}")
+    # Check primitive usage in solution
+    usage = _count_primitive_usage(result.best_expr)
+    if usage and verbose:
+        print(f"Solution uses primitives: {usage}")
 
-    # Try to save as tool
-    if hasattr(tool_library, 'add_with_generalization'):
-        added, reason = tool_library.add_with_generalization(
-            tool_name, result.best_expr, result.best_fitness
+    # Try to save as primitive
+    if hasattr(primitive_library, 'add_with_generalization'):
+        added, reason = primitive_library.add_with_generalization(
+            primitive_name, result.best_expr, result.best_fitness
         )
     else:
-        added = tool_library.should_save(result.best_expr, result.best_fitness)
+        added = primitive_library.should_save(result.best_expr, result.best_fitness)
         reason = "Added" if added else "Not saved"
         if added:
-            from genetic_gp.tools.library import Tool
+            from genetic_gp.tools.library import DerivedPrimitive
             from genetic_gp.core.signatures import behavioral_signature
             sig = behavioral_signature(result.best_expr)
-            tool = Tool(name=tool_name, expr=result.best_expr, signature=sig)
-            tool_library.add(tool)
+            primitive = DerivedPrimitive(name=primitive_name, expr=result.best_expr, signature=sig)
+            primitive_library.add(primitive)
 
-    if reporter and hasattr(reporter, 'on_tool_consideration'):
+    if reporter and hasattr(reporter, 'on_primitive_consideration'):
+        decision = 'accepted' if added else 'rejected'
+        if 'Generalized' in reason:
+            decision = 'generalized'
+        reporter.on_primitive_consideration(result.best_expr, result.best_fitness, decision, reason)
+    # Backwards compatibility
+    elif reporter and hasattr(reporter, 'on_tool_consideration'):
         decision = 'accepted' if added else 'rejected'
         if 'Generalized' in reason:
             decision = 'generalized'
@@ -320,10 +330,21 @@ def evolve_and_save_tool(
 
     if verbose:
         if added:
-            print(f"Saved as tool '{tool_name}': {reason}")
+            print(f"Saved as primitive '{primitive_name}': {reason}")
         else:
-            print(f"Not saved as tool: {reason}")
+            print(f"Not saved as primitive: {reason}")
 
     return result
+
+
+# Backwards compatibility alias
+def evolve_and_save_tool(
+    fitness_fn: Callable[[Callable[[int], float]], float],
+    tool_library: Any,
+    tool_name: str,
+    **kwargs,
+) -> EvolutionResult:
+    """Deprecated: Use evolve_and_save_primitive() instead."""
+    return evolve_and_save_primitive(fitness_fn, tool_library, tool_name, **kwargs)
 
 

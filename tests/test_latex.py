@@ -42,13 +42,13 @@ class TestToLatexBasic:
         assert to_latex(expr) == r"\prod_{i=1}^{n} i"
 
     def test_toolcall_to_latex(self):
-        """Tool calls should render with \text{} wrapper."""
+        """Primitive calls should render with \text{} wrapper."""
         from genetic_gp.core.latex import to_latex
-        from genetic_gp.core.expressions import ToolCall, Var, Const
+        from genetic_gp.core.expressions import PrimitiveCall, Var
 
-        # Create a minimal ToolCall (tool_library can be None for this test)
-        tc = ToolCall('double', [Var('n')], None)
-        result = to_latex(tc)
+        # Create a minimal PrimitiveCall (primitive_library can be None for this test)
+        pc = PrimitiveCall('double', Var('n'), None)
+        result = to_latex(pc)
         assert r"\text{double}" in result
 
 

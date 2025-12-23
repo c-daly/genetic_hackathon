@@ -165,42 +165,41 @@ class Product:
 
 
 @dataclass
-class ToolCall:
-    """Call to a previously discovered tool."""
-    tool_name: str
-    args: list  # List of Expression arguments
-    tool_library: Any  # ToolLibrary reference
+class PrimitiveCall:
+    """Call to a previously discovered derived primitive."""
+    primitive_name: str
+    arg: Any  # Expression argument (typically just n)
+    primitive_library: Any = None  # PrimitiveLibrary reference (optional for serialization)
 
     def eval(self, env: Dict[str, Any]) -> float:
         try:
-            tool = self.tool_library.get(self.tool_name)
-            if tool is None:
+            if self.primitive_library is None:
+                return 0
+            primitive = self.primitive_library.get(self.primitive_name)
+            if primitive is None:
                 return 0
 
-            # Evaluate arguments
-            arg_vals = []
-            for arg in self.args:
-                if hasattr(arg, 'eval'):
-                    arg_vals.append(arg.eval(env))
-                else:
-                    arg_vals.append(arg)
+            # Evaluate argument
+            if hasattr(self.arg, 'eval'):
+                arg_val = self.arg.eval(env)
+            else:
+                arg_val = self.arg
 
-            # Get input value and evaluate tool
-            input_val = env.get('n', 0)
-            return tool.eval_with_args(input_val, arg_vals)
+            # Evaluate the primitive
+            return primitive.eval_with_args(arg_val, [])
         except Exception:
             return 0
 
     def complexity(self) -> int:
-        # Tool calls have base cost + argument complexity
-        # But don't count tool's internal complexity (encourages tool reuse)
+        # Primitive calls have base cost + argument complexity
+        # But don't count primitive's internal complexity (encourages reuse)
         base = 2
-        args_complexity = sum(
-            arg.complexity() if hasattr(arg, 'complexity') else 1
-            for arg in self.args
-        )
-        return base + args_complexity
+        arg_complexity = self.arg.complexity() if hasattr(self.arg, 'complexity') else 1
+        return base + arg_complexity
 
     def __repr__(self) -> str:
-        args_str = ','.join(str(a) for a in self.args)
-        return f"{self.tool_name}({args_str})"
+        return f"{self.primitive_name}()"
+
+
+# Backwards compatibility alias
+ToolCall = PrimitiveCall

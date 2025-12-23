@@ -1,11 +1,11 @@
 """
-TWO-PHASE EVOLUTION WITH TOOL ACCUMULATION
+TWO-PHASE EVOLUTION WITH PRIMITIVE ACCUMULATION
 
 Evolution in two phases:
 1. Find any correct solution (accuracy >= 0.99)
 2. Aggressively simplify until target complexity or stuck
 
-Tools are accumulated across problems - later problems can reuse earlier discoveries.
+Derived primitives are accumulated across problems - later problems can reuse earlier discoveries.
 
 Usage:
     python -m genetic_gp.experiments.simplicity
@@ -15,28 +15,28 @@ from typing import Callable
 
 from genetic_gp.core.reporter import get_reporter
 from genetic_gp.core.config import get_config, Verbosity
-from genetic_gp.evolution.engine import evolve_and_save_tool
-from genetic_gp.tools.library import ToolLibrary
+from genetic_gp.evolution.engine import evolve_and_save_primitive
+from genetic_gp.tools.library import PrimitiveLibrary
 from genetic_gp.problems.math import test_double, test_square, test_sum_to_n, test_cube
 
 
-def run_tool_accumulation_demo():
-    """Demonstrate tool accumulation across problems."""
+def run_primitive_accumulation_demo():
+    """Demonstrate primitive accumulation across problems."""
     reporter = get_reporter()
     config = get_config()
     verbose = config.output.verbosity_level >= Verbosity.VERBOSE
 
-    # Shared tool library across all problems
-    tool_library = ToolLibrary()
+    # Shared primitive library across all problems
+    primitive_library = PrimitiveLibrary()
 
     print("=" * 70)
-    print("TOOL ACCUMULATION DEMO")
+    print("PRIMITIVE ACCUMULATION DEMO")
     print("=" * 70)
     print()
     print("Strategy:")
-    print("  1. Solve problem -> aggressively simplify -> save as tool")
-    print("  2. Later problems can reuse earlier tools")
-    print("  3. Watch for: tool usage, generalization, simplification")
+    print("  1. Solve problem -> aggressively simplify -> save as derived primitive")
+    print("  2. Later problems can reuse earlier primitives")
+    print("  3. Watch for: primitive usage, generalization, simplification")
     print()
 
     problems = [
@@ -46,15 +46,15 @@ def run_tool_accumulation_demo():
         ("cube", "f(n) = n³", test_cube),
     ]
 
-    for tool_name, problem_name, fitness_fn in problems:
+    for primitive_name, problem_name, fitness_fn in problems:
         print("\n" + "=" * 70)
         print(f"PROBLEM: {problem_name}")
         print("=" * 70)
 
-        result = evolve_and_save_tool(
+        result = evolve_and_save_primitive(
             fitness_fn,
-            tool_library=tool_library,
-            tool_name=tool_name,
+            primitive_library=primitive_library,
+            primitive_name=primitive_name,
             reporter=reporter if verbose else None,
             verbose=True,
             pop_size=60,
@@ -71,14 +71,18 @@ def run_tool_accumulation_demo():
 
     # Summary
     print("\n" + "=" * 70)
-    print("TOOL LIBRARY SUMMARY")
+    print("PRIMITIVE LIBRARY SUMMARY")
     print("=" * 70)
-    tool_library.print_summary()
+    primitive_library.print_summary()
+
+    # Save to file for persistence demo
+    primitive_library.save("primitives.yaml")
+    print("\nSaved to primitives.yaml")
 
 
 def main():
     """Run the demo."""
-    run_tool_accumulation_demo()
+    run_primitive_accumulation_demo()
 
     print("\n" + "=" * 70)
     print("KEY FEATURES")
@@ -89,11 +93,12 @@ def main():
     print("  ✓ Target complexity of 5 or less")
     print("  ✓ Stop early if no improvement for 10 gens")
     print()
-    print("Tool accumulation:")
-    print("  ✓ Save solutions as reusable tools")
+    print("Primitive accumulation:")
+    print("  ✓ Save solutions as derived primitives")
     print("  ✓ Generalize patterns (n*2 -> n*k)")
-    print("  ✓ Report tool usage in solutions")
-    print("  ✓ Later problems can build on earlier tools")
+    print("  ✓ Report primitive usage in solutions")
+    print("  ✓ Later problems can build on earlier primitives")
+    print("  ✓ Persist to YAML for reuse across sessions")
     print()
 
 
