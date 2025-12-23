@@ -82,7 +82,7 @@ def evolve_with_simplicity(
         if scores[0][1] >= 0.99:
             if verbose:
                 reporter.on_solved(scores[0][0], scores[0][1], gen)
-            break
+            return scores[0][0], scores[0][1], scores[0][2]
 
         # Selection and reproduction
         survivors = [e for e, _, _ in scores[:pop_size // 5]]
@@ -92,6 +92,10 @@ def evolve_with_simplicity(
             child = mutate(parent, rate=0.2, vars_available=['n'])
             next_pop.append(child)
         population = next_pop
+
+    # Show best result even if not fully solved
+    if verbose and best_ever is not None:
+        reporter.on_new_best(best_ever, best_accuracy, generations)
 
     return best_ever, best_accuracy, best_combined
 
