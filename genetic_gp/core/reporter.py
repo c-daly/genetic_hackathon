@@ -175,6 +175,65 @@ class Reporter:
                 border_style="magenta"
             ))
 
+    def on_population_sample(self, generation: int, sample: list) -> None:
+        """
+        Show sample of expressions being tried this generation.
+
+        Args:
+            generation: Current generation
+            sample: List of (expr, fitness) tuples to display
+        """
+        if self.verbosity < Verbosity.VERBOSE:
+            return
+
+        self.console.print()
+        self.console.print(f"[dim]Gen {generation} - Trying expressions like:[/dim]")
+        for expr, fitness in sample[:5]:  # Show up to 5 examples
+            complexity = expr.complexity()
+            self.console.print(f"  [dim]{expr}[/dim]  fitness={fitness:.3f} complexity={complexity}")
+
+    def on_tool_consideration(self, expr: Any, fitness: float, decision: str, reason: str) -> None:
+        """
+        Report when considering whether to save an expression as a tool.
+
+        Args:
+            expr: Expression being considered
+            fitness: Fitness achieved
+            decision: 'accepted', 'rejected', or 'generalized'
+            reason: Why the decision was made
+        """
+        if self.verbosity < Verbosity.VERBOSE:
+            return
+
+        if decision == 'accepted':
+            style = "green"
+            icon = "+"
+        elif decision == 'generalized':
+            style = "yellow"
+            icon = "~"
+        else:  # rejected
+            style = "dim"
+            icon = "-"
+
+        self.console.print(f"  [{style}][{icon}] {expr}[/{style}]")
+        self.console.print(f"      [{style}]{reason}[/{style}]")
+
+    def on_thought(self, message: str, detail: str = None) -> None:
+        """
+        Log a thought/reasoning step.
+
+        Args:
+            message: Main thought/action
+            detail: Optional detail
+        """
+        if self.verbosity < Verbosity.VERBOSE:
+            return
+
+        if detail:
+            self.console.print(f"[dim]> {message}: {detail}[/dim]")
+        else:
+            self.console.print(f"[dim]> {message}[/dim]")
+
     def _print_expression(self, label: str, expr: Any, rendered: Optional[str]) -> None:
         """
         Print expression, handling sixel output specially.

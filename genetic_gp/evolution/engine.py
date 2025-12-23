@@ -98,6 +98,13 @@ def evolve(
         # Sort by selection score (descending) - prefers accurate AND simple
         scores.sort(key=lambda x: x[2], reverse=True)
 
+        # Show sample of what we're trying (every 10 generations in verbose mode)
+        if reporter and gen % 10 == 0 and hasattr(reporter, 'on_population_sample'):
+            # Pick diverse sample: best, median, and a random
+            sample_indices = [0, len(scores) // 2, -1]
+            sample = [(scores[i][0], scores[i][1]) for i in sample_indices if i < len(scores)]
+            reporter.on_population_sample(gen, sample)
+
         # Track best by accuracy (the actual fitness)
         best_accuracy_this_gen = max(s[1] for s in scores)
         if best_accuracy_this_gen > best_fitness:
