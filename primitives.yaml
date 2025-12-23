@@ -1,0 +1,37 @@
+version: 1
+primitives:
+- name: power_nk
+  expr:
+    type: BinOp
+    op: ^
+    left:
+      type: Var
+      name: n
+    right:
+      type: Var
+      name: k
+  signature:
+  - 0
+  - 1
+  - 8
+  - 27
+  - 64
+  - 125
+  - 216
+  - 343
+  - 512
+  - 729
+  - 1000
+  - 1331
+  - 1728
+  - 2197
+  - 2744
+  - 3375
+  - 4096
+  - 4913
+  - 5832
+  - 6859
+  params:
+  - k
+  metadata:
+    generalized_from: (n^3)
