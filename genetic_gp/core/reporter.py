@@ -1,6 +1,7 @@
 """Reporter module for genetic programming progress tracking."""
 
 from __future__ import annotations
+import sys
 from typing import Any, Optional
 
 from rich.console import Console
@@ -9,7 +10,7 @@ from rich.table import Table
 
 from genetic_gp.core.config import Verbosity, get_config, Config
 from genetic_gp.core.latex import to_latex
-from genetic_gp.core.renderer import render_expression
+from genetic_gp.core.renderer import render_expression, supports_sixel
 
 
 class Reporter:
@@ -100,10 +101,7 @@ class Reporter:
             border_style="green"
         ))
 
-        if rendered:
-            self.console.print(f"Expression: {rendered}")
-        else:
-            self.console.print(f"Expression: {expr}")
+        self._print_expression("Expression", expr, rendered)
 
     def on_solved(self, expr: Any, fitness: float, generation: int) -> None:
         """
@@ -133,10 +131,7 @@ class Reporter:
             border_style="bold green"
         ))
 
-        if rendered:
-            self.console.print(f"Solution: {rendered}")
-        else:
-            self.console.print(f"Solution: {expr}")
+        self._print_expression("Solution", expr, rendered)
 
     def on_simplified(self, original: Any, simplified: Any) -> None:
         """
@@ -173,6 +168,29 @@ class Reporter:
                 title="Tool Discovered",
                 border_style="magenta"
             ))
+
+    def _print_expression(self, label: str, expr: Any, rendered: Optional[str]) -> None:
+        """
+        Print expression, handling sixel output specially.
+
+        Sixel sequences must be written directly to stdout to preserve
+        escape characters that Rich Console would strip.
+
+        Args:
+            label: Label to show before expression (e.g., "Expression", "Solution")
+            expr: Expression object
+            rendered: Pre-rendered string (may contain sixel)
+        """
+        if rendered and rendered.startswith('\x1b'):
+            # Sixel output - write directly to stdout to preserve escape sequences
+            sys.stdout.write(f"{label}: ")
+            sys.stdout.write(rendered)
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+        elif rendered:
+            self.console.print(f"{label}: {rendered}")
+        else:
+            self.console.print(f"{label}: {expr}")
 
     def _render_expression(self, expr: Any) -> Optional[str]:
         """
