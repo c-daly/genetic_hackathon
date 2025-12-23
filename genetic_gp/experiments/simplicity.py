@@ -13,6 +13,7 @@ from typing import Callable
 
 from genetic_gp.core.expressions import Const, Var, BinOp, Sum
 from genetic_gp.core.signatures import behavioral_signature
+from genetic_gp.core.reporter import get_reporter
 from genetic_gp.evolution.generator import random_expr
 from genetic_gp.evolution.mutation import mutate
 from genetic_gp.problems.math import test_double, test_square, test_sum_to_n
@@ -42,6 +43,7 @@ def evolve_with_simplicity(
     Returns:
         (best_expression, accuracy, combined_fitness)
     """
+    reporter = get_reporter()
     population = [random_expr(0, 3, ['n']) for _ in range(pop_size)]
 
     best_ever = None
@@ -74,14 +76,12 @@ def evolve_with_simplicity(
             best_ever = scores[0][0]
 
         if verbose and gen % 20 == 0:
-            top_expr, top_acc, top_comb = scores[0]
-            print(f"Gen {gen:3d}: Accuracy={top_acc:.3f} Combined={top_comb:.3f} "
-                  f"Complexity={top_expr.complexity()}")
+            reporter.on_generation_update(gen, scores[0][2])
 
         # Check for solved with good simplicity
         if scores[0][1] >= 0.99:
             if verbose:
-                print(f"Solved at generation {gen}")
+                reporter.on_solved(scores[0][0], scores[0][1], gen)
             break
 
         # Selection and reproduction
@@ -108,9 +108,11 @@ def compare_with_without_simplicity(
         fitness_fn: Fitness function
         num_runs: Number of runs to average
     """
-    print(f"\n{'=' * 70}")
-    print(f"PROBLEM: {problem_name}")
-    print("=" * 70)
+    reporter = get_reporter()
+    reporter.on_problem_started(
+        problem_name,
+        "Comparing evolution with and without simplicity pressure"
+    )
 
     # Without simplicity pressure
     print("\n--- Without simplicity pressure (weight=0.0) ---")
