@@ -6,7 +6,7 @@ output:
   verbosity: normal
 
   # Renderer: sixel | unicode | plain
-  renderer: sixel
+  renderer: unicode
 
   # Fallback if sixel not supported
   fallback: unicode
