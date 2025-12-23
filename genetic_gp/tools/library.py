@@ -70,17 +70,38 @@ class ToolLibrary:
         self._by_name: Dict[str, Tool] = {}
 
     def add(self, tool: Tool) -> bool:
-        """Add a tool to the library.
+        """Add a tool to the library, preferring simpler equivalents.
+
+        If an equivalent tool (same behavioral signature) already exists:
+        - Keep the simpler one
+        - Replace if new tool is simpler
 
         Args:
             tool: Tool to add
 
         Returns:
-            True if added, False if duplicate
+            True if added (or replaced existing), False if duplicate name or not simpler
         """
         if tool.name in self._by_name:
             return False
 
+        # Check for functionally equivalent existing tool
+        existing = self.find_by_signature(tool.signature)
+
+        if existing:
+            # Found equivalent - keep simpler one
+            if tool.complexity() < existing.complexity():
+                # New tool is simpler - replace existing
+                self._tools.remove(existing)
+                del self._by_name[existing.name]
+                self._tools.append(tool)
+                self._by_name[tool.name] = tool
+                return True  # Replaced with simpler
+            else:
+                # Existing is simpler or equal - keep it
+                return False
+
+        # No equivalent exists - add new tool
         self._tools.append(tool)
         self._by_name[tool.name] = tool
         return True
@@ -181,6 +202,23 @@ class ToolLibrary:
 
     def __iter__(self):
         return iter(self._tools)
+
+    def try_simplify(self, expr: Any) -> tuple[Any, bool]:
+        """Try to simplify an expression using known equivalent tools.
+
+        Args:
+            expr: Expression to simplify
+
+        Returns:
+            (simplified_expr, was_simplified) - the simpler expression and whether simplification occurred
+        """
+        sig = behavioral_signature(expr)
+        existing = self.find_by_signature(sig)
+
+        if existing and existing.complexity() < expr.complexity():
+            return existing.expr, True
+
+        return expr, False
 
     def print_summary(self):
         """Print a summary of all tools in the library."""
