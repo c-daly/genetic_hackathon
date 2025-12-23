@@ -33,12 +33,14 @@ def evolve(
     verbose: bool = True,
     report_interval: int = 20,
     reporter: Any | None = None,
+    max_complexity: int = 10,
+    simplify_generations: int = 30,
 ) -> EvolutionResult:
     """Run genetic programming evolution.
 
     Two-phase approach:
     1. Evolve to find a correct solution (accuracy >= stop_at_fitness)
-    2. Continue for 10 more generations, keeping only simpler solutions that are still correct
+    2. Continue aggressively simplifying until no improvement or max generations
 
     Args:
         fitness_fn: Function that takes a callable f(n) -> float and returns fitness [0, 1]
@@ -54,6 +56,8 @@ def evolve(
         verbose: Print progress updates
         report_interval: Generations between progress reports
         reporter: Optional reporter for progress tracking
+        max_complexity: Target maximum complexity (keep simplifying until reached or stuck)
+        simplify_generations: Max generations to spend simplifying after solving
 
     Returns:
         EvolutionResult with best expression and metadata
@@ -75,6 +79,7 @@ def evolve(
     best_fitness = 0.0
     all_solutions: List[Tuple[Any, float]] = []
     first_solved_gen: int | None = None
+    last_improvement_gen: int = 0
 
     for gen in range(generations):
         # Evaluate population
@@ -124,36 +129,77 @@ def evolve(
         if on_generation is not None:
             on_generation(gen, scores)
 
-        # Check if solved - continue for more generations to find simpler solutions
+        # Check if solved - continue aggressively simplifying
         if best_accuracy_this_gen >= stop_at_fitness:
             # Find simplest expression with target accuracy in this generation
             solved_exprs = [(e, a) for e, a in scores if a >= stop_at_fitness]
             if solved_exprs:
                 # Already sorted by complexity as tiebreaker
                 simplest = solved_exprs[0][0]
+
+                # Also try to simplify using tool library if available
+                if tool_library and hasattr(tool_library, 'try_simplify'):
+                    simplified, was_simplified = tool_library.try_simplify(simplest)
+                    if was_simplified:
+                        # Verify simplified version still works
+                        simp_acc = fitness_fn(lambda n, e=simplified: e.eval({'n': n}))
+                        if simp_acc >= stop_at_fitness:
+                            simplest = simplified
+                            if reporter and hasattr(reporter, 'on_thought'):
+                                reporter.on_thought("Simplified using tool library", f"{simplified}")
+
                 if best_ever is None or simplest.complexity() < best_ever.complexity():
+                    old_complexity = best_ever.complexity() if best_ever else float('inf')
                     best_ever = simplest
+                    last_improvement_gen = gen
                     if reporter and hasattr(reporter, 'on_thought'):
-                        reporter.on_thought("Found simpler solution", f"{simplest} (complexity {simplest.complexity()})")
+                        reporter.on_thought("Found simpler solution", f"{simplest} (complexity {old_complexity} -> {simplest.complexity()})")
 
             # Track when we first solved
             if first_solved_gen is None:
                 first_solved_gen = gen
+                last_improvement_gen = gen
                 if verbose:
-                    print(f"Solved! Continuing to find simpler solutions...")
+                    print(f"Solved! Complexity={best_ever.complexity()}. Aggressively simplifying...")
                 # Emit solved event
                 if reporter:
                     reporter.on_solved(best_ever, best_fitness, gen)
-            elif gen - first_solved_gen >= 10:  # Continue for 10 more generations
-                if verbose:
-                    print(f"Final solution at generation {gen}")
-                return EvolutionResult(
-                    best_expr=best_ever,
-                    best_fitness=best_fitness,
-                    generations_run=gen + 1,
-                    solved=True,
-                    all_solutions=all_solutions,
-                )
+            else:
+                # Check stopping conditions for simplification phase
+                gens_since_solve = gen - first_solved_gen
+                gens_since_improvement = gen - last_improvement_gen
+
+                # Stop if: reached target complexity, OR spent max generations, OR stuck for 10 gens
+                if best_ever.complexity() <= max_complexity:
+                    if verbose:
+                        print(f"Reached target complexity {best_ever.complexity()} at gen {gen}")
+                    return EvolutionResult(
+                        best_expr=best_ever,
+                        best_fitness=best_fitness,
+                        generations_run=gen + 1,
+                        solved=True,
+                        all_solutions=all_solutions,
+                    )
+                elif gens_since_solve >= simplify_generations:
+                    if verbose:
+                        print(f"Max simplify generations reached. Final complexity: {best_ever.complexity()}")
+                    return EvolutionResult(
+                        best_expr=best_ever,
+                        best_fitness=best_fitness,
+                        generations_run=gen + 1,
+                        solved=True,
+                        all_solutions=all_solutions,
+                    )
+                elif gens_since_improvement >= 10:
+                    if verbose:
+                        print(f"No improvement for 10 gens. Final complexity: {best_ever.complexity()}")
+                    return EvolutionResult(
+                        best_expr=best_ever,
+                        best_fitness=best_fitness,
+                        generations_run=gen + 1,
+                        solved=True,
+                        all_solutions=all_solutions,
+                    )
 
         # Selection - keep top performers by accuracy (simpler ones win ties)
         num_survivors = max(1, int(pop_size * survivor_fraction))
@@ -179,5 +225,105 @@ def evolve(
         solved=False,
         all_solutions=all_solutions,
     )
+
+
+def _count_tool_usage(expr: Any) -> dict:
+    """Count how many times each tool is used in an expression."""
+    from genetic_gp.core.expressions import ToolCall
+
+    counts = {}
+
+    def count_recursive(e):
+        if isinstance(e, ToolCall):
+            tool_name = e.tool_name
+            counts[tool_name] = counts.get(tool_name, 0) + 1
+            for arg in e.args:
+                count_recursive(arg)
+        elif hasattr(e, 'left'):
+            count_recursive(e.left)
+            count_recursive(e.right)
+        elif hasattr(e, 'body'):
+            count_recursive(e.start)
+            count_recursive(e.end)
+            count_recursive(e.body)
+        elif hasattr(e, 'expr'):
+            count_recursive(e.expr)
+
+    count_recursive(expr)
+    return counts
+
+
+def evolve_and_save_tool(
+    fitness_fn: Callable[[Callable[[int], float]], float],
+    tool_library: Any,
+    tool_name: str,
+    reporter: Any | None = None,
+    verbose: bool = True,
+    **kwargs,
+) -> EvolutionResult:
+    """Evolve a solution and try to save it as a tool.
+
+    Args:
+        fitness_fn: Fitness function
+        tool_library: ToolLibrary to save to
+        tool_name: Name for the tool if saved
+        reporter: Optional reporter for progress
+        verbose: Print progress
+        **kwargs: Additional args for evolve()
+
+    Returns:
+        EvolutionResult
+    """
+    # Show existing tools
+    if verbose and len(tool_library) > 0:
+        print(f"\nAvailable tools: {[t.name for t in tool_library.list_tools()]}")
+
+    # Evolve
+    result = evolve(
+        fitness_fn,
+        tool_library=tool_library,
+        reporter=reporter,
+        verbose=verbose,
+        **kwargs,
+    )
+
+    if not result.solved:
+        if verbose:
+            print(f"Did not solve - not saving tool")
+        return result
+
+    # Check tool usage in solution
+    tool_usage = _count_tool_usage(result.best_expr)
+    if tool_usage and verbose:
+        print(f"Solution uses tools: {tool_usage}")
+
+    # Try to save as tool
+    if hasattr(tool_library, 'add_with_generalization'):
+        added, reason = tool_library.add_with_generalization(
+            tool_name, result.best_expr, result.best_fitness
+        )
+    else:
+        added = tool_library.should_save(result.best_expr, result.best_fitness)
+        reason = "Added" if added else "Not saved"
+        if added:
+            from genetic_gp.tools.library import Tool
+            from genetic_gp.core.signatures import behavioral_signature
+            sig = behavioral_signature(result.best_expr)
+            tool = Tool(name=tool_name, expr=result.best_expr, signature=sig)
+            tool_library.add(tool)
+
+    if reporter and hasattr(reporter, 'on_tool_consideration'):
+        decision = 'accepted' if added else 'rejected'
+        if 'Generalized' in reason:
+            decision = 'generalized'
+        reporter.on_tool_consideration(result.best_expr, result.best_fitness, decision, reason)
+
+    if verbose:
+        if added:
+            print(f"Saved as tool '{tool_name}': {reason}")
+        else:
+            print(f"Not saved as tool: {reason}")
+
+    return result
 
 

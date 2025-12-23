@@ -189,19 +189,33 @@ class TestTrivialDetection:
         """Variables are trivial."""
         assert empty_tool_library.is_trivial(Var('n'))
 
-    def test_simple_binop_is_trivial(self, empty_tool_library):
-        """Simple binary ops with only terminals are trivial.
+    def test_binop_with_const_is_trivial(self, empty_tool_library):
+        """Binary ops with var and const are trivial (should be generalized).
 
         We don't want to save n*2, n*3, n*4 as separate tools.
         Instead, these should be generalized to patterns like n*k.
         """
-        # n * 2
+        # n * 2 - should be generalized to n*k
         expr = BinOp('*', Var('n'), Const(2))
         assert empty_tool_library.is_trivial(expr)
 
-        # n + n
-        expr = BinOp('+', Var('n'), Var('n'))
+        # 5 + n - should be generalized to k+n
+        expr = BinOp('+', Const(5), Var('n'))
         assert empty_tool_library.is_trivial(expr)
+
+    def test_binop_with_two_vars_not_trivial(self, empty_tool_library):
+        """Binary ops with two variables are NOT trivial (valid patterns).
+
+        n*n (squaring) and n+n (doubling) are valid patterns that
+        don't have a constant to generalize. They should be saveable.
+        """
+        # n + n - valid doubling pattern
+        expr = BinOp('+', Var('n'), Var('n'))
+        assert not empty_tool_library.is_trivial(expr)
+
+        # n * n - valid squaring pattern
+        expr = BinOp('*', Var('n'), Var('n'))
+        assert not empty_tool_library.is_trivial(expr)
 
     def test_nested_binop_not_trivial(self, empty_tool_library):
         """Nested binary ops are not trivial."""

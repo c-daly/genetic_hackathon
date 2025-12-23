@@ -1,13 +1,11 @@
 """
-TWO-PHASE EVOLUTION: SOLVE THEN SIMPLIFY
+TWO-PHASE EVOLUTION WITH TOOL ACCUMULATION
 
 Evolution in two phases:
 1. Find any correct solution (accuracy >= 0.99)
-2. Continue searching for simpler solutions that maintain correctness
+2. Aggressively simplify until target complexity or stuck
 
-No simplicity weight during evolution - we select purely on accuracy,
-using complexity only as a tiebreaker. After finding a solution,
-we continue for 10 more generations looking for simpler equivalents.
+Tools are accumulated across problems - later problems can reuse earlier discoveries.
 
 Usage:
     python -m genetic_gp.experiments.simplicity
@@ -17,108 +15,85 @@ from typing import Callable
 
 from genetic_gp.core.reporter import get_reporter
 from genetic_gp.core.config import get_config, Verbosity
-from genetic_gp.evolution.engine import evolve
-from genetic_gp.problems.math import test_double, test_square, test_sum_to_n
+from genetic_gp.evolution.engine import evolve_and_save_tool
+from genetic_gp.tools.library import ToolLibrary
+from genetic_gp.problems.math import test_double, test_square, test_sum_to_n, test_cube
 
 
-def run_two_phase_evolution(
-    problem_name: str,
-    fitness_fn: Callable,
-    num_runs: int = 3,
-    pop_size: int = 60,
-    generations: int = 80,
-):
-    """Run evolution with two-phase approach and show results.
-
-    Args:
-        problem_name: Name for display
-        fitness_fn: Fitness function
-        num_runs: Number of runs to average
-        pop_size: Population size
-        generations: Max generations
-    """
+def run_tool_accumulation_demo():
+    """Demonstrate tool accumulation across problems."""
     reporter = get_reporter()
     config = get_config()
     verbose = config.output.verbosity_level >= Verbosity.VERBOSE
 
-    reporter.on_problem_started(
-        problem_name,
-        "Two-phase evolution: solve then simplify"
-    )
+    # Shared tool library across all problems
+    tool_library = ToolLibrary()
 
-    print("\n  Approach: Pure accuracy selection, then continue to find simpler solutions")
-    print("  - Phase 1: Find any correct solution (accuracy >= 0.99)")
-    print("  - Phase 2: Continue 10 more generations, keeping simpler correct solutions")
-    print("  - Complexity is tiebreaker only (simpler wins when accuracy is equal)\n")
+    print("=" * 70)
+    print("TOOL ACCUMULATION DEMO")
+    print("=" * 70)
+    print()
+    print("Strategy:")
+    print("  1. Solve problem -> aggressively simplify -> save as tool")
+    print("  2. Later problems can reuse earlier tools")
+    print("  3. Watch for: tool usage, generalization, simplification")
+    print()
 
-    results = []
-    for i in range(num_runs):
-        result = evolve(
+    problems = [
+        ("double", "f(n) = 2n", test_double),
+        ("square", "f(n) = n²", test_square),
+        ("sum_to_n", "f(n) = 1+2+...+n", test_sum_to_n),
+        ("cube", "f(n) = n³", test_cube),
+    ]
+
+    for tool_name, problem_name, fitness_fn in problems:
+        print("\n" + "=" * 70)
+        print(f"PROBLEM: {problem_name}")
+        print("=" * 70)
+
+        result = evolve_and_save_tool(
             fitness_fn,
-            pop_size=pop_size,
-            generations=generations,
-            verbose=verbose,
+            tool_library=tool_library,
+            tool_name=tool_name,
             reporter=reporter if verbose else None,
+            verbose=True,
+            pop_size=60,
+            generations=100,
+            max_complexity=5,  # Target simple solutions
+            simplify_generations=30,  # Spend up to 30 gens simplifying
         )
-        results.append(result)
-        complexity = result.best_expr.complexity()
-        solved = "✓" if result.solved else "✗"
-        print(f"    Run {i+1}: {solved} Accuracy={result.best_fitness:.3f} Complexity={complexity} in {result.generations_run} gens")
-        print(f"           Expression: {result.best_expr}")
 
-    # Summary
-    avg_complexity = sum(r.best_expr.complexity() for r in results) / num_runs
-    avg_accuracy = sum(r.best_fitness for r in results) / num_runs
-    solved_count = sum(1 for r in results if r.solved)
-
-    print(f"\n  Summary ({num_runs} runs):")
-    print("  " + "-" * 50)
-    print(f"    Solved: {solved_count}/{num_runs}")
-    print(f"    Average accuracy: {avg_accuracy:.3f}")
-    print(f"    Average complexity: {avg_complexity:.1f}")
-
-    # Show the simplest solution found
-    best = min(results, key=lambda r: (not r.solved, r.best_expr.complexity()))
-    if best.solved:
-        print(f"\n  Simplest solution found:")
-        print(f"    {best.best_expr}")
-        print(f"    Complexity: {best.best_expr.complexity()}")
-
-
-def main():
-    """Run two-phase evolution demos."""
-    print("=" * 70)
-    print("TWO-PHASE EVOLUTION: SOLVE THEN SIMPLIFY")
-    print("=" * 70)
-    print()
-    print("Evolution strategy:")
-    print("  1. Evolve until problem is solved (accuracy >= 0.99)")
-    print("  2. Continue for 10 more generations")
-    print("  3. Only accept simpler solutions that maintain correctness")
-    print("  4. Return the simplest correct solution found")
-    print()
-    print("Selection: Pure accuracy with complexity as tiebreaker")
-    print("           (No simplicity weight - correctness is never sacrificed)")
-
-    # Demo 1: Double
-    run_two_phase_evolution("f(n) = 2n", test_double, num_runs=3)
-
-    # Demo 2: Square
-    run_two_phase_evolution("f(n) = n²", test_square, num_runs=3)
-
-    # Demo 3: Sum to n
-    run_two_phase_evolution("f(n) = 1+2+...+n", test_sum_to_n, num_runs=3, generations=100)
+        if result.solved:
+            print(f"\nFinal: {result.best_expr}")
+            print(f"Complexity: {result.best_expr.complexity()}")
+        else:
+            print(f"\nDid not solve (best fitness: {result.best_fitness:.3f})")
 
     # Summary
     print("\n" + "=" * 70)
-    print("KEY INSIGHT")
+    print("TOOL LIBRARY SUMMARY")
+    print("=" * 70)
+    tool_library.print_summary()
+
+
+def main():
+    """Run the demo."""
+    run_tool_accumulation_demo()
+
+    print("\n" + "=" * 70)
+    print("KEY FEATURES")
     print("=" * 70)
     print()
-    print("Two-phase evolution guarantees:")
-    print("  ✓ Correctness is never sacrificed for simplicity")
-    print("  ✓ After solving, actively search for simpler equivalents")
-    print("  ✓ Complexity tiebreaker prefers simpler among equally accurate")
-    print("  ✓ No arbitrary simplicity weights to tune")
+    print("Aggressive simplification:")
+    print("  ✓ Continue up to 30 generations after solving")
+    print("  ✓ Target complexity of 5 or less")
+    print("  ✓ Stop early if no improvement for 10 gens")
+    print()
+    print("Tool accumulation:")
+    print("  ✓ Save solutions as reusable tools")
+    print("  ✓ Generalize patterns (n*2 -> n*k)")
+    print("  ✓ Report tool usage in solutions")
+    print("  ✓ Later problems can build on earlier tools")
     print()
 
 
