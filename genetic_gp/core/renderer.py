@@ -10,6 +10,8 @@ matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 from PIL import Image
 
+from genetic_gp.core.latex import to_latex
+
 
 def render_latex_to_png(latex: str, font_size: int = 14, dpi: int = 150) -> bytes:
     """
@@ -171,9 +173,13 @@ def supports_sixel() -> bool:
     if 'sixel' in term.lower():
         return True
 
+    # Check if we're in Windows Terminal (WT_SESSION is set)
+    if os.environ.get('WT_SESSION'):
+        return True
+
     # Check if we're in a known sixel-capable terminal
     term_program = os.environ.get('TERM_PROGRAM', '')
-    if term_program in ['mlterm', 'yaft']:
+    if term_program in ['mlterm', 'yaft', 'mintty']:
         return True
 
     # Could also check terminfo database, but this is a simple heuristic
@@ -207,13 +213,8 @@ def render_expression(
         return render_unicode(expr)
 
     if renderer == 'sixel':
-        # Convert expression to LaTeX (assume it has __repr__ with Unicode)
-        latex = repr(expr)
-
-        # Replace Unicode with LaTeX equivalents
-        latex = latex.replace('Σ', r'\sum')
-        latex = latex.replace('∏', r'\prod')
-        latex = latex.replace('..', r'\ldots')
+        # Convert expression to LaTeX
+        latex = to_latex(expr, pretty=pretty)
 
         try:
             png_bytes = render_latex_to_png(latex, font_size=font_size, dpi=dpi)
