@@ -7,6 +7,9 @@ from genetic_gp.core.signatures import (
     signature_similarity,
     analyze_growth,
 )
+from genetic_gp.core.config import Config, load_config, get_config, Verbosity
+from genetic_gp.core.latex import to_latex
+from genetic_gp.core.reporter import Reporter, get_reporter
 from genetic_gp.core.logic import (
     LConst,
     LVar,
@@ -41,6 +44,16 @@ __all__ = [
     "signatures_match",
     "signature_similarity",
     "analyze_growth",
+    # Config
+    "Config",
+    "load_config",
+    "get_config",
+    "Verbosity",
+    # LaTeX
+    "to_latex",
+    # Reporter
+    "Reporter",
+    "get_reporter",
     # Logic expressions
     "LConst",
     "LVar",

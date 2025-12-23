@@ -1,0 +1,25 @@
+# Genetic Programming Configuration
+# Copy to your project root and customize
+
+output:
+  # Verbosity: minimal | normal | verbose
+  verbosity: normal
+
+  # Renderer: sixel | unicode | plain
+  renderer: sixel
+
+  # Fallback if sixel not supported
+  fallback: unicode
+
+latex:
+  # Apply pretty formatting (2n instead of n*2)
+  pretty: true
+
+  # Font size for rendered images
+  font_size: 14
+
+  # Image resolution
+  dpi: 150
+
+# Generations between updates (verbose mode)
+report_interval: 10
