@@ -41,6 +41,16 @@ class TestToLatexBasic:
         expr = Product("i", Const(1), Var("n"), Var("i"))
         assert to_latex(expr) == r"\prod_{i=1}^{n} i"
 
+    def test_toolcall_to_latex(self):
+        """Tool calls should render with \text{} wrapper."""
+        from genetic_gp.core.latex import to_latex
+        from genetic_gp.core.expressions import ToolCall, Var, Const
+
+        # Create a minimal ToolCall (tool_library can be None for this test)
+        tc = ToolCall('double', [Var('n')], None)
+        result = to_latex(tc)
+        assert r"\text{double}" in result
+
 
 class TestToLatexPretty:
     """Tests for pretty LaTeX formatting."""
