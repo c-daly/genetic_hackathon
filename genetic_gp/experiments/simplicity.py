@@ -75,6 +75,10 @@ def evolve_with_simplicity(
             best_accuracy = scores[0][1]
             best_ever = scores[0][0]
 
+            # Show new best in verbose mode
+            if verbose:
+                reporter.on_new_best(best_ever, best_accuracy, gen)
+
         if verbose and gen % 20 == 0:
             reporter.on_generation_update(gen, scores[0][2])
 
@@ -92,10 +96,6 @@ def evolve_with_simplicity(
             child = mutate(parent, rate=0.2, vars_available=['n'])
             next_pop.append(child)
         population = next_pop
-
-    # Show best result even if not fully solved
-    if verbose and best_ever is not None:
-        reporter.on_new_best(best_ever, best_accuracy, generations)
 
     return best_ever, best_accuracy, best_combined
 
