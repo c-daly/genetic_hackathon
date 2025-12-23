@@ -275,3 +275,108 @@ class TestToolCallIntegration:
         # With arg: complexity = 2 + arg_complexity
         call_with_arg = ToolCall('double', [Const(5)], tool_library_with_double)
         assert call_with_arg.complexity() == 3  # 2 + 1
+
+
+class TestGeneralization:
+    """Tests for pattern generalization."""
+
+    def test_try_generalize_n_times_const(self, empty_tool_library):
+        """n*2 should generalize to n*k."""
+        expr = BinOp('*', Var('n'), Const(2))
+        result = empty_tool_library.try_generalize(expr)
+
+        assert result is not None
+        gen_expr, params, param_vals = result
+        assert params == ['k']
+        assert param_vals == {'k': 2}
+        assert isinstance(gen_expr, BinOp)
+        assert gen_expr.op == '*'
+
+    def test_try_generalize_const_times_n(self, empty_tool_library):
+        """3*n should generalize to k*n."""
+        expr = BinOp('*', Const(3), Var('n'))
+        result = empty_tool_library.try_generalize(expr)
+
+        assert result is not None
+        gen_expr, params, param_vals = result
+        assert params == ['k']
+        assert param_vals == {'k': 3}
+
+    def test_try_generalize_n_power_const(self, empty_tool_library):
+        """n^3 should generalize to n^k."""
+        expr = BinOp('^', Var('n'), Const(3))
+        result = empty_tool_library.try_generalize(expr)
+
+        assert result is not None
+        _, params, param_vals = result
+        assert params == ['k']
+        assert param_vals == {'k': 3}
+
+    def test_try_generalize_not_generalizable(self, empty_tool_library, sum_1_to_n):
+        """Complex expressions should not generalize."""
+        result = empty_tool_library.try_generalize(sum_1_to_n)
+        assert result is None
+
+    def test_is_covered_by_general_tool(self, empty_tool_library):
+        """n*3 should be covered by a general n*k tool."""
+        # Add generalized tool for n*k
+        gen_expr = BinOp('*', Var('n'), Var('k'))
+        sig = behavioral_signature(BinOp('*', Var('n'), Const(1)))
+        tool = Tool(
+            name='multiply_by_k',
+            expr=gen_expr,
+            signature=sig,
+            params=['k']
+        )
+        empty_tool_library.add(tool)
+
+        # n*3 should be covered
+        expr = BinOp('*', Var('n'), Const(3))
+        covering = empty_tool_library.is_covered_by_general_tool(expr)
+        assert covering is not None
+        assert covering.name == 'multiply_by_k'
+
+    def test_not_covered_by_different_pattern(self, empty_tool_library):
+        """n+3 should not be covered by n*k tool."""
+        # Add generalized tool for n*k
+        gen_expr = BinOp('*', Var('n'), Var('k'))
+        sig = behavioral_signature(BinOp('*', Var('n'), Const(1)))
+        tool = Tool(
+            name='multiply_by_k',
+            expr=gen_expr,
+            signature=sig,
+            params=['k']
+        )
+        empty_tool_library.add(tool)
+
+        # n+3 should NOT be covered (different op)
+        expr = BinOp('+', Var('n'), Const(3))
+        covering = empty_tool_library.is_covered_by_general_tool(expr)
+        assert covering is None
+
+    def test_add_with_generalization(self, empty_tool_library):
+        """add_with_generalization should create general tools."""
+        expr = BinOp('*', Var('n'), Const(2))
+        added, msg = empty_tool_library.add_with_generalization('mult', expr, 1.0)
+
+        assert added
+        assert 'Generalized' in msg
+        assert 'n*k' in msg or "(n*k)" in msg
+
+        # Check the tool was stored with params
+        tool = empty_tool_library.get('mult')
+        assert tool is not None
+        assert tool.params == ['k']
+
+    def test_add_with_generalization_prevents_duplicates(self, empty_tool_library):
+        """Second instance of same pattern should not add new tool."""
+        # Add n*2 -> generalizes to n*k
+        expr1 = BinOp('*', Var('n'), Const(2))
+        added1, _ = empty_tool_library.add_with_generalization('mult', expr1, 1.0)
+        assert added1
+
+        # Try to add n*3 -> should be covered by existing n*k
+        expr2 = BinOp('*', Var('n'), Const(3))
+        added2, msg = empty_tool_library.add_with_generalization('triple', expr2, 1.0)
+        assert not added2
+        assert 'Covered' in msg or 'pattern' in msg.lower()

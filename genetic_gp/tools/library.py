@@ -8,6 +8,86 @@ from genetic_gp.core.expressions import Const, Var, BinOp, Sum, Product
 from genetic_gp.core.signatures import behavioral_signature, signature_similarity
 
 
+def _extract_pattern(expr: Any) -> tuple[Any, Dict[str, float]] | None:
+    """Extract a generalizable pattern from an expression.
+
+    Recognizes patterns like:
+    - n * 2 → n * k (with k=2)
+    - n ^ 3 → n ^ k (with k=3)
+    - n + 5 → n + k (with k=5)
+    - 2 * n → k * n (with k=2)
+
+    Returns:
+        (generalized_expr, param_values) or None if not generalizable
+    """
+    if not isinstance(expr, BinOp):
+        return None
+
+    # Check for patterns: var OP const or const OP var
+    left_is_var = isinstance(expr.left, Var) and expr.left.name == 'n'
+    right_is_var = isinstance(expr.right, Var) and expr.right.name == 'n'
+    left_is_const = isinstance(expr.left, Const)
+    right_is_const = isinstance(expr.right, Const)
+
+    if left_is_var and right_is_const:
+        # n OP k pattern
+        k_val = expr.right.val
+        generalized = BinOp(expr.op, Var('n'), Var('k'))
+        return generalized, {'k': k_val}
+    elif left_is_const and right_is_var:
+        # k OP n pattern
+        k_val = expr.left.val
+        generalized = BinOp(expr.op, Var('k'), Var('n'))
+        return generalized, {'k': k_val}
+
+    return None
+
+
+def _match_pattern(expr: Any, pattern: Any) -> Dict[str, float] | None:
+    """Check if expr matches a generalized pattern.
+
+    Returns parameter values if match, None otherwise.
+    """
+    if type(expr) != type(pattern):
+        return None
+
+    if isinstance(expr, Const):
+        return {} if expr.val == pattern.val else None
+
+    if isinstance(expr, Var):
+        if pattern.name == 'k':
+            # This is a parameter - expr should be a constant
+            return None  # Var can't match param
+        return {} if expr.name == pattern.name else None
+
+    if isinstance(expr, BinOp):
+        if expr.op != pattern.op:
+            return None
+
+        # Check if pattern has parameter in left or right
+        if isinstance(pattern.left, Var) and pattern.left.name == 'k':
+            if isinstance(expr.left, Const):
+                right_match = _match_pattern(expr.right, pattern.right)
+                if right_match is not None:
+                    return {'k': expr.left.val, **right_match}
+            return None
+
+        if isinstance(pattern.right, Var) and pattern.right.name == 'k':
+            if isinstance(expr.right, Const):
+                left_match = _match_pattern(expr.left, pattern.left)
+                if left_match is not None:
+                    return {'k': expr.right.val, **left_match}
+            return None
+
+        # No parameters - must match exactly
+        left_match = _match_pattern(expr.left, pattern.left)
+        right_match = _match_pattern(expr.right, pattern.right)
+        if left_match is not None and right_match is not None:
+            return {**left_match, **right_match}
+
+    return None
+
+
 @dataclass
 class Tool:
     """A discovered computational pattern that can be reused."""
@@ -169,6 +249,35 @@ class ToolLibrary:
 
         return False
 
+    def is_covered_by_general_tool(self, expr: Any) -> Tool | None:
+        """Check if expression is an instance of an existing generalized tool.
+
+        For example, if we have a tool for n*k, then n*3 is covered.
+
+        Returns:
+            The general tool that covers this expression, or None
+        """
+        for tool in self._tools:
+            if tool.params:  # Only check generalized tools
+                match = _match_pattern(expr, tool.expr)
+                if match is not None:
+                    return tool
+        return None
+
+    def try_generalize(self, expr: Any) -> tuple[Any, List[str], Dict[str, float]] | None:
+        """Try to generalize an expression by extracting parameters.
+
+        For example: n*2 → (n*k, ['k'], {'k': 2})
+
+        Returns:
+            (generalized_expr, param_names, param_values) or None if not generalizable
+        """
+        result = _extract_pattern(expr)
+        if result:
+            generalized_expr, param_values = result
+            return generalized_expr, list(param_values.keys()), param_values
+        return None
+
     def should_save(self, expr: Any, fitness: float) -> bool:
         """Check if an expression should be saved as a tool.
 
@@ -187,11 +296,60 @@ class ToolLibrary:
         if self.is_trivial(expr):
             return False
 
+        # Check if covered by existing general tool (e.g., n*3 covered by n*k)
+        if self.is_covered_by_general_tool(expr):
+            return False
+
         # Must be novel
         if not self.is_novel(expr):
             return False
 
         return True
+
+    def add_with_generalization(self, name: str, expr: Any, fitness: float) -> tuple[bool, str]:
+        """Try to add a tool, generalizing if possible.
+
+        Instead of saving n*2, tries to save n*k as a general pattern.
+
+        Returns:
+            (was_added, message) - whether added and explanation
+        """
+        # Check if already covered by general tool
+        covering_tool = self.is_covered_by_general_tool(expr)
+        if covering_tool:
+            return False, f"Covered by general tool '{covering_tool.name}'"
+
+        # Try to generalize
+        gen_result = self.try_generalize(expr)
+        if gen_result:
+            gen_expr, params, _ = gen_result
+            # Check if we already have this general pattern
+            for tool in self._tools:
+                if tool.params == params and repr(tool.expr) == repr(gen_expr):
+                    return False, f"General pattern already exists as '{tool.name}'"
+
+            # Create generalized tool
+            sig = behavioral_signature(expr)  # Use original signature
+            tool = Tool(
+                name=name,
+                expr=gen_expr,
+                signature=sig,
+                params=params,
+                metadata={'generalized_from': repr(expr)}
+            )
+            added = self.add(tool)
+            if added:
+                return True, f"Generalized to {gen_expr} with params {params}"
+            return False, "General tool not added (equivalent exists)"
+
+        # Not generalizable - add as-is if novel
+        if not self.should_save(expr, fitness):
+            return False, "Expression not novel or trivial"
+
+        sig = behavioral_signature(expr)
+        tool = Tool(name=name, expr=expr, signature=sig)
+        added = self.add(tool)
+        return added, "Added as specific tool" if added else "Equivalent exists"
 
     def list_tools(self) -> List[Tool]:
         """Return list of all tools."""
