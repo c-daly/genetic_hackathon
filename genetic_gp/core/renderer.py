@@ -10,6 +10,10 @@ matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 from PIL import Image
 
+# Enable real LaTeX rendering if available
+plt.rcParams['text.usetex'] = True
+plt.rcParams['font.family'] = 'serif'
+
 from genetic_gp.core.latex import to_latex
 
 
@@ -213,8 +217,16 @@ def render_expression(
         return render_unicode(expr)
 
     if renderer == 'sixel':
+        # Skip sixel for complex expressions - matplotlib can't render them well
+        if hasattr(expr, 'complexity') and expr.complexity() > 15:
+            return render_unicode(expr)
+
         # Convert expression to LaTeX
         latex = to_latex(expr, pretty=pretty)
+
+        # Skip if LaTeX is too long (nested expressions)
+        if len(latex) > 100:
+            return render_unicode(expr)
 
         try:
             png_bytes = render_latex_to_png(latex, font_size=font_size, dpi=dpi)
