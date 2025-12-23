@@ -189,15 +189,15 @@ class TestTrivialDetection:
         """Variables are trivial."""
         assert empty_tool_library.is_trivial(Var('n'))
 
-    def test_simple_binop_is_trivial(self, empty_tool_library):
-        """Simple binary ops with terminals are trivial."""
-        # n * 2
+    def test_simple_binop_not_trivial(self, empty_tool_library):
+        """Simple binary ops ARE worth saving - they're ideal simple solutions."""
+        # n * 2 is the ideal solution to "double" - not trivial!
         expr = BinOp('*', Var('n'), Const(2))
-        assert empty_tool_library.is_trivial(expr)
+        assert not empty_tool_library.is_trivial(expr)
 
-        # n + n
+        # n + n is also a valid simple solution - not trivial!
         expr = BinOp('+', Var('n'), Var('n'))
-        assert empty_tool_library.is_trivial(expr)
+        assert not empty_tool_library.is_trivial(expr)
 
     def test_nested_binop_not_trivial(self, empty_tool_library):
         """Nested binary ops are not trivial."""
@@ -218,10 +218,11 @@ class TestShouldSave:
         """Low fitness expressions should not be saved."""
         assert not empty_tool_library.should_save(sum_1_to_n, fitness=0.5)
 
-    def test_trivial_not_saved(self, empty_tool_library, double_expr):
+    def test_trivial_not_saved(self, empty_tool_library):
         """Trivial expressions should not be saved even with high fitness."""
-        # double_expr is n*2 which is trivial
-        assert not empty_tool_library.should_save(double_expr, fitness=1.0)
+        # Constants and bare variables are trivial
+        assert not empty_tool_library.should_save(Const(5), fitness=1.0)
+        assert not empty_tool_library.should_save(Var('n'), fitness=1.0)
 
     def test_non_novel_not_saved(self, tool_library_with_double, sum_1_to_n):
         """Non-novel expressions should not be saved."""

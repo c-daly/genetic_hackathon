@@ -126,19 +126,14 @@ class ToolLibrary:
     def is_trivial(self, expr: Any) -> bool:
         """Check if an expression is trivial (too simple to save).
 
-        Trivial expressions are single operations like n*2, n+n, n^2
-        that don't represent meaningful patterns.
+        Only truly trivial expressions (constants, bare variables) are rejected.
+        Simple operations like n*2 or n^2 ARE worth saving as they represent
+        the ideal simple solutions to problems.
         """
-        # Constants and variables are trivial
+        # Only constants and bare variables are trivial
+        # Simple operations like n*2, n^2 are NOT trivial - they're ideal solutions!
         if isinstance(expr, (Const, Var)):
             return True
-
-        # Simple binary ops with both sides being terminals
-        if isinstance(expr, BinOp):
-            left_simple = isinstance(expr.left, (Const, Var))
-            right_simple = isinstance(expr.right, (Const, Var))
-            if left_simple and right_simple:
-                return True
 
         return False
 

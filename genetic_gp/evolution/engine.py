@@ -32,6 +32,7 @@ def evolve(
     survivor_fraction: float = 0.2,
     verbose: bool = True,
     report_interval: int = 20,
+    simplicity_weight: float = 0.1,
 ) -> EvolutionResult:
     """Run genetic programming evolution.
 
@@ -48,10 +49,12 @@ def evolve(
         survivor_fraction: Fraction of population that survives to reproduce
         verbose: Print progress updates
         report_interval: Generations between progress reports
+        simplicity_weight: Weight for simplicity in selection (0-1). Higher values prefer simpler solutions.
 
     Returns:
         EvolutionResult with best expression and metadata
     """
+    import math
     if vars_available is None:
         vars_available = ['n']
 
@@ -64,51 +67,81 @@ def evolve(
     best_ever = None
     best_fitness = 0.0
     all_solutions: List[Tuple[Any, float]] = []
+    first_solved_gen: int | None = None
 
     for gen in range(generations):
         # Evaluate population
-        scores: List[Tuple[Any, float]] = []
+        scores: List[Tuple[Any, float, float]] = []  # (expr, accuracy, selection_score)
         for expr in population:
             # Wrap expression evaluation in a callable for fitness function
-            fitness = fitness_fn(lambda n, e=expr: e.eval({'n': n}))
-            scores.append((expr, fitness))
+            accuracy = fitness_fn(lambda n, e=expr: e.eval({'n': n}))
 
-            # Collect solutions above threshold
-            if collect_solutions_above is not None and fitness > collect_solutions_above:
-                all_solutions.append((expr, fitness))
+            # Calculate simplicity bonus (exponential decay with complexity)
+            complexity = expr.complexity()
+            simplicity = math.exp(-complexity / 10.0)
 
-        # Sort by fitness (descending)
-        scores.sort(key=lambda x: x[1], reverse=True)
+            # Combined selection score (but track accuracy separately)
+            selection_score = accuracy * (1 - simplicity_weight) + simplicity * simplicity_weight
 
-        # Track best
-        if scores[0][1] > best_fitness:
-            best_fitness = scores[0][1]
-            best_ever = scores[0][0]
+            scores.append((expr, accuracy, selection_score))
+
+            # Collect solutions above threshold (by accuracy, not selection score)
+            if collect_solutions_above is not None and accuracy > collect_solutions_above:
+                all_solutions.append((expr, accuracy))
+
+        # Sort by selection score (descending) - prefers accurate AND simple
+        scores.sort(key=lambda x: x[2], reverse=True)
+
+        # Track best by accuracy (the actual fitness)
+        best_accuracy_this_gen = max(s[1] for s in scores)
+        if best_accuracy_this_gen > best_fitness:
+            # Find simplest expression with best accuracy
+            best_exprs = [(e, a, s) for e, a, s in scores if a == best_accuracy_this_gen]
+            best_exprs.sort(key=lambda x: x[0].complexity())
+            best_fitness = best_accuracy_this_gen
+            best_ever = best_exprs[0][0]
 
         # Report progress
-        if verbose and (gen % report_interval == 0 or scores[0][1] >= stop_at_fitness):
-            avg = sum(s for _, s in scores) / len(scores)
-            print(f"Gen {gen:3d}: Best={scores[0][1]:.3f} Avg={avg:.3f}")
+        if verbose and (gen % report_interval == 0 or best_accuracy_this_gen >= stop_at_fitness):
+            avg_accuracy = sum(a for _, a, _ in scores) / len(scores)
+            top_expr, top_acc, _ = scores[0]
+            print(f"Gen {gen:3d}: Best={top_acc:.3f} Avg={avg_accuracy:.3f} Complexity={top_expr.complexity()}")
 
-        # Call generation hook
+        # Call generation hook (pass accuracy scores for compatibility)
         if on_generation is not None:
-            on_generation(gen, scores)
+            compat_scores = [(e, a) for e, a, _ in scores]
+            on_generation(gen, compat_scores)
 
-        # Check if solved
-        if scores[0][1] >= stop_at_fitness:
-            if verbose:
-                print(f"Solved at generation {gen}")
-            return EvolutionResult(
-                best_expr=scores[0][0],
-                best_fitness=scores[0][1],
-                generations_run=gen + 1,
-                solved=True,
-                all_solutions=all_solutions,
-            )
+        # Check if solved (by accuracy)
+        # Continue for a few more generations to find simpler solutions
+        if best_accuracy_this_gen >= stop_at_fitness:
+            # Find simplest expression with target accuracy in this generation
+            solved_exprs = [(e, a) for e, a, _ in scores if a >= stop_at_fitness]
+            if solved_exprs:
+                solved_exprs.sort(key=lambda x: x[0].complexity())
+                simplest = solved_exprs[0][0]
+                if best_ever is None or simplest.complexity() < best_ever.complexity():
+                    best_ever = simplest
 
-        # Selection - keep top performers
+            # Track when we first solved
+            if first_solved_gen is None:
+                first_solved_gen = gen
+                if verbose:
+                    print(f"Solved! Continuing to find simpler solutions...")
+            elif gen - first_solved_gen >= 10:  # Continue for 10 more generations
+                if verbose:
+                    print(f"Final solution at generation {gen}")
+                return EvolutionResult(
+                    best_expr=best_ever,
+                    best_fitness=best_fitness,
+                    generations_run=gen + 1,
+                    solved=True,
+                    all_solutions=all_solutions,
+                )
+
+        # Selection - keep top performers by selection score (accurate AND simple)
         num_survivors = max(1, int(pop_size * survivor_fraction))
-        survivors = [expr for expr, _ in scores[:num_survivors]]
+        survivors = [expr for expr, _, _ in scores[:num_survivors]]
 
         # Breed next generation
         next_pop = survivors.copy()
