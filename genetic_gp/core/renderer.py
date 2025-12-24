@@ -2,6 +2,7 @@
 
 import io
 import os
+import shutil
 import subprocess
 from typing import Any, Optional
 
@@ -11,7 +12,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 
 # Enable real LaTeX rendering if available
-plt.rcParams['text.usetex'] = True
+plt.rcParams['text.usetex'] = shutil.which('latex') is not None
 plt.rcParams['font.family'] = 'serif'
 
 from genetic_gp.core.latex import to_latex

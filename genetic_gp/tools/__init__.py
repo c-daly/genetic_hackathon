@@ -6,6 +6,12 @@ from genetic_gp.tools.transformation import (
     TransformationLibrary,
     discover_transformations_from_solutions,
 )
+from genetic_gp.tools.algorithm import (
+    Algorithm,
+    AlgorithmLibrary,
+    AlgorithmTemplate,
+    discover_algorithms_from_solutions,
+)
 from genetic_gp.tools.generalization import (
     GeneralizedPattern,
     generalize_pattern,
@@ -19,6 +25,10 @@ __all__ = [
     "Transformation",
     "TransformationLibrary",
     "discover_transformations_from_solutions",
+    "Algorithm",
+    "AlgorithmLibrary",
+    "AlgorithmTemplate",
+    "discover_algorithms_from_solutions",
     "GeneralizedPattern",
     "generalize_pattern",
     "try_generalize_and_save",
