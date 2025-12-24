@@ -127,6 +127,15 @@ class TestSimplify:
         assert result.op == '^'
         assert isinstance(result.right, Const) and result.right.val == 3
 
+    def test_multiplication_chain_becomes_power(self):
+        # n * n * n -> n ^ 3
+        expr = BinOp('*', BinOp('*', Var('n'), Var('n')), Var('n'))
+        result = simplify(expr)
+        assert isinstance(result, BinOp)
+        assert result.op == '^'
+        assert isinstance(result.left, Var) and result.left.name == 'n'
+        assert isinstance(result.right, Const) and result.right.val == 3
+
 
 class TestIsDegenerate:
     """Tests for degenerate expression detection."""

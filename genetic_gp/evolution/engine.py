@@ -26,6 +26,8 @@ def evolve(
     generations: int = 60,
     vars_available: List[str] | None = None,
     tool_library: Any | None = None,
+    transformation_library: Any | None = None,
+    algorithm_library: Any | None = None,
     collect_solutions_above: float | None = None,
     on_generation: Callable[[int, List[Tuple[Any, float]]], None] | None = None,
     stop_at_fitness: float = 0.99,
@@ -36,6 +38,14 @@ def evolve(
     reporter: Any | None = None,
     max_complexity: int = 10,
     simplify_generations: int = 30,
+    transformation_min_fitness: float = 0.5,
+    transformation_min_reduction: int = 2,
+    transformation_discovery_interval: int | None = None,
+    transformation_apply_probability: float = 0.2,
+    algorithm_min_fitness: float = 0.9,
+    algorithm_min_occurrences: int = 2,
+    algorithm_discovery_interval: int | None = None,
+    run_logger: Any | None = None,
 ) -> EvolutionResult:
     """Run genetic programming evolution.
 
@@ -49,6 +59,8 @@ def evolve(
         generations: Maximum generations to run
         vars_available: Variables available for expressions (default: ['n'])
         tool_library: Optional ToolLibrary for tool reuse
+        transformation_library: Optional TransformationLibrary for simplification discovery
+        algorithm_library: Optional AlgorithmLibrary for structural template discovery
         collect_solutions_above: If set, collect all solutions with fitness above this threshold
         on_generation: Optional callback called after each generation with (gen, scores)
         stop_at_fitness: Stop early if fitness reaches this threshold
@@ -59,6 +71,13 @@ def evolve(
         reporter: Optional reporter for progress tracking
         max_complexity: Target maximum complexity (keep simplifying until reached or stuck)
         simplify_generations: Max generations to spend simplifying after solving
+        transformation_min_fitness: Minimum fitness for transformation discovery candidates
+        transformation_min_reduction: Minimum complexity reduction to save a transformation
+        transformation_discovery_interval: Generations between transformation discovery passes
+        transformation_apply_probability: Chance to apply known transformations during mutation
+        algorithm_min_fitness: Minimum fitness for algorithm discovery candidates
+        algorithm_min_occurrences: Minimum occurrences before saving an algorithm template
+        algorithm_discovery_interval: Generations between algorithm discovery passes
 
     Returns:
         EvolutionResult with best expression and metadata
@@ -69,6 +88,20 @@ def evolve(
     # Emit problem started event
     if reporter:
         reporter.on_problem_started("Evolution Started", f"Population: {pop_size}, Generations: {generations}")
+    if run_logger is not None:
+        run_logger.log_event(
+            "evolution_started",
+            {
+                "pop_size": pop_size,
+                "generations": generations,
+                "vars_available": vars_available,
+                "stop_at_fitness": stop_at_fitness,
+                "mutation_rate": mutation_rate,
+                "survivor_fraction": survivor_fraction,
+                "max_complexity": max_complexity,
+                "simplify_generations": simplify_generations,
+            },
+        )
 
     # Initialize population with random expressions
     population = [
@@ -81,6 +114,36 @@ def evolve(
     all_solutions: List[Tuple[Any, float]] = []
     first_solved_gen: int | None = None
     last_improvement_gen: int = 0
+    last_transformation_discovery_gen: int | None = None
+    last_algorithm_discovery_gen: int | None = None
+
+    collect_threshold = collect_solutions_above
+    if collect_threshold is None and transformation_library is not None:
+        collect_threshold = transformation_min_fitness
+
+    def maybe_discover_transformations() -> int:
+        if transformation_library is None or not all_solutions:
+            return 0
+        from genetic_gp.tools.transformation import discover_transformations_from_solutions
+
+        return discover_transformations_from_solutions(
+            all_solutions,
+            transformation_library,
+            min_fitness=transformation_min_fitness,
+            min_reduction=transformation_min_reduction,
+        )
+
+    def maybe_discover_algorithms() -> int:
+        if algorithm_library is None or not all_solutions:
+            return 0
+        from genetic_gp.tools.algorithm import discover_algorithms_from_solutions
+
+        return discover_algorithms_from_solutions(
+            all_solutions,
+            algorithm_library,
+            min_fitness=algorithm_min_fitness,
+            min_occurrences=algorithm_min_occurrences,
+        )
 
     for gen in range(generations):
         # Evaluate population
@@ -91,11 +154,13 @@ def evolve(
             scores.append((expr, accuracy))
 
             # Collect solutions above threshold
-            if collect_solutions_above is not None and accuracy > collect_solutions_above:
+            if collect_threshold is not None and accuracy > collect_threshold:
                 all_solutions.append((expr, accuracy))
 
         # Sort by accuracy (descending), then by complexity (ascending) as tiebreaker
         scores.sort(key=lambda x: (-x[1], x[0].complexity()))
+        if run_logger is not None:
+            run_logger.log_population(gen, scores)
 
         # Show sample of what we're trying (every 10 generations in verbose mode)
         if reporter and gen % 10 == 0 and hasattr(reporter, 'on_population_sample'):
@@ -125,6 +190,16 @@ def evolve(
         # Emit generation update event
         if reporter and (gen % report_interval == 0 or best_accuracy_this_gen >= stop_at_fitness):
             reporter.on_generation_update(gen, best_accuracy_this_gen)
+        if run_logger is not None:
+            run_logger.log_event(
+                "generation_summary",
+                {
+                    "generation": gen,
+                    "best_fitness": best_accuracy_this_gen,
+                    "avg_fitness": sum(a for _, a in scores) / len(scores),
+                    "best_expr": repr(scores[0][0]),
+                },
+            )
 
         # Call generation hook
         if on_generation is not None:
@@ -149,6 +224,18 @@ def evolve(
                             if reporter and hasattr(reporter, 'on_thought'):
                                 reporter.on_thought("Simplified using tool library", f"{simplified}")
 
+                if transformation_library is not None:
+                    transformed = transformation_library.try_simplify(simplest)
+                    if transformed is not simplest and transformed.complexity() < simplest.complexity():
+                        trans_acc = fitness_fn(lambda n, e=transformed: e.eval({'n': n}))
+                        if trans_acc >= stop_at_fitness:
+                            simplest = transformed
+                            if reporter and hasattr(reporter, 'on_thought'):
+                                reporter.on_thought(
+                                    "Simplified using transformations",
+                                    f"{transformed}",
+                                )
+
                 if best_ever is None or simplest.complexity() < best_ever.complexity():
                     old_complexity = best_ever.complexity() if best_ever else float('inf')
                     best_ever = simplest
@@ -165,6 +252,16 @@ def evolve(
                 # Emit solved event
                 if reporter:
                     reporter.on_solved(best_ever, best_fitness, gen)
+                if run_logger is not None:
+                    run_logger.log_event(
+                        "solved",
+                        {
+                            "generation": gen,
+                            "best_expr": repr(best_ever),
+                            "best_fitness": best_fitness,
+                            "complexity": best_ever.complexity(),
+                        },
+                    )
             else:
                 # Check stopping conditions for simplification phase
                 gens_since_solve = gen - first_solved_gen
@@ -174,33 +271,90 @@ def evolve(
                 if best_ever.complexity() <= max_complexity:
                     if verbose:
                         print(f"Reached target complexity {best_ever.complexity()} at gen {gen}")
-                    return EvolutionResult(
+                    maybe_discover_transformations()
+                    maybe_discover_algorithms()
+                    result = EvolutionResult(
                         best_expr=simplify(best_ever),
                         best_fitness=best_fitness,
                         generations_run=gen + 1,
                         solved=True,
                         all_solutions=all_solutions,
                     )
+                    if run_logger is not None:
+                        run_logger.log_event(
+                            "evolution_finished",
+                            {
+                                "generations_run": result.generations_run,
+                                "solved": result.solved,
+                                "best_fitness": result.best_fitness,
+                                "best_expr": repr(result.best_expr),
+                            },
+                        )
+                    return result
                 elif gens_since_solve >= simplify_generations:
                     if verbose:
                         print(f"Max simplify generations reached. Final complexity: {best_ever.complexity()}")
-                    return EvolutionResult(
+                    maybe_discover_transformations()
+                    maybe_discover_algorithms()
+                    result = EvolutionResult(
                         best_expr=simplify(best_ever),
                         best_fitness=best_fitness,
                         generations_run=gen + 1,
                         solved=True,
                         all_solutions=all_solutions,
                     )
+                    if run_logger is not None:
+                        run_logger.log_event(
+                            "evolution_finished",
+                            {
+                                "generations_run": result.generations_run,
+                                "solved": result.solved,
+                                "best_fitness": result.best_fitness,
+                                "best_expr": repr(result.best_expr),
+                            },
+                        )
+                    return result
                 elif gens_since_improvement >= 10:
                     if verbose:
                         print(f"No improvement for 10 gens. Final complexity: {best_ever.complexity()}")
-                    return EvolutionResult(
+                    maybe_discover_transformations()
+                    maybe_discover_algorithms()
+                    result = EvolutionResult(
                         best_expr=simplify(best_ever),
                         best_fitness=best_fitness,
                         generations_run=gen + 1,
                         solved=True,
                         all_solutions=all_solutions,
                     )
+                    if run_logger is not None:
+                        run_logger.log_event(
+                            "evolution_finished",
+                            {
+                                "generations_run": result.generations_run,
+                                "solved": result.solved,
+                                "best_fitness": result.best_fitness,
+                                "best_expr": repr(result.best_expr),
+                            },
+                        )
+                    return result
+
+        if (
+            transformation_library is not None
+            and transformation_discovery_interval is not None
+            and gen % transformation_discovery_interval == 0
+            and gen != last_transformation_discovery_gen
+        ):
+            maybe_discover_transformations()
+            last_transformation_discovery_gen = gen
+
+        if (
+            algorithm_library is not None
+            and algorithm_discovery_interval is not None
+            and gen % algorithm_discovery_interval == 0
+            and gen != last_algorithm_discovery_gen
+        ):
+            maybe_discover_algorithms()
+            last_algorithm_discovery_gen = gen
 
         # Selection - keep top performers by accuracy (simpler ones win ties)
         num_survivors = max(1, int(pop_size * survivor_fraction))
@@ -211,6 +365,12 @@ def evolve(
         while len(next_pop) < pop_size:
             parent = random.choice(survivors)
             child = mutate(parent, rate=mutation_rate, vars_available=vars_available, tool_library=tool_library)
+            if (
+                transformation_library is not None
+                and transformation_apply_probability > 0
+                and random.random() < transformation_apply_probability
+            ):
+                child = transformation_library.try_simplify(child)
             next_pop.append(child)
 
         population = next_pop
@@ -218,14 +378,27 @@ def evolve(
     # Did not solve, return best found
     if verbose:
         print(f"Best after {generations} generations: {best_fitness:.3f}")
+    maybe_discover_transformations()
+    maybe_discover_algorithms()
 
-    return EvolutionResult(
+    result = EvolutionResult(
         best_expr=simplify(best_ever) if best_ever else None,
         best_fitness=best_fitness,
         generations_run=generations,
         solved=False,
         all_solutions=all_solutions,
     )
+    if run_logger is not None:
+        run_logger.log_event(
+            "evolution_finished",
+            {
+                "generations_run": result.generations_run,
+                "solved": result.solved,
+                "best_fitness": result.best_fitness,
+                "best_expr": repr(result.best_expr),
+            },
+        )
+    return result
 
 
 def _count_primitive_usage(expr: Any) -> dict:
@@ -347,5 +520,3 @@ def evolve_and_save_tool(
 ) -> EvolutionResult:
     """Deprecated: Use evolve_and_save_primitive() instead."""
     return evolve_and_save_primitive(fitness_fn, tool_library, tool_name, **kwargs)
-
-

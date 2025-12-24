@@ -8,10 +8,17 @@ Later evolution can apply these transformations.
 Meta-computation: discovering rules for transforming computations.
 """
 
+import json
 import random
 import hashlib
+from pathlib import Path
 from dataclasses import dataclass
-from typing import Any, List, Tuple, Optional
+from typing import Any, Optional, Sequence, Tuple
+
+from genetic_gp.core.logic import Implies, LVar
+from genetic_gp.core.proofs import Proof, ProofStep
+from genetic_gp.tools.algorithm import AlgorithmLibrary, discover_algorithms_from_solutions
+from genetic_gp.core.runlog import RunLogger
 
 # ============================================
 # EXPRESSION TYPES
@@ -204,6 +211,63 @@ class TransformationLibrary:
             print(f"   → {trans.to_expr}")
 
 # ============================================
+# PRIMITIVE LIBRARY
+# ============================================
+
+@dataclass
+class ToolCall:
+    tool_name: str
+    arg: Any
+    tool_library: Any
+
+    def eval(self, env):
+        tool_expr = self.tool_library.get_tool(self.tool_name)
+        if tool_expr is None:
+            return 0
+        value = self.arg.eval(env)
+        return tool_expr.eval({'n': value})
+
+    def complexity(self):
+        tool_expr = self.tool_library.get_tool(self.tool_name)
+        if tool_expr is None:
+            return 1 + self.arg.complexity()
+        return 2 + self.arg.complexity() + tool_expr.complexity()
+
+    def __repr__(self):
+        return f"{self.tool_name}({self.arg})"
+
+
+class PrimitiveLibrary:
+    def __init__(self, min_fitness=0.99):
+        self.tools = {}
+        self.min_fitness = min_fitness
+
+    def should_save(self, expr, fitness) -> bool:
+        if fitness < self.min_fitness:
+            return False
+        signature = behavioral_signature(expr)
+        return signature not in (tool["signature"] for tool in self.tools.values())
+
+    def add_tool(self, name, expr):
+        signature = behavioral_signature(expr)
+        self.tools[name] = {"expr": expr, "signature": signature}
+        print(f"\n  📦 Saved primitive: {name} -> {expr}")
+
+    def get_tool(self, name):
+        tool = self.tools.get(name)
+        return tool["expr"] if tool else None
+
+    def list_tools(self):
+        if not self.tools:
+            print("\n  (No primitives saved yet)")
+            return
+        print(f"\n{'='*70}")
+        print(f"PRIMITIVE LIBRARY: {len(self.tools)} primitives")
+        print(f"{'='*70}")
+        for i, (name, tool) in enumerate(self.tools.items(), 1):
+            print(f"\n{i}. {name}: {tool['expr']}")
+
+# ============================================
 # EVOLUTION WITH TRANSFORMATION DISCOVERY
 # ============================================
 
@@ -215,7 +279,36 @@ class Solution:
         self.signature = behavioral_signature(expr)
         self.complexity = expr.complexity()
 
-def evolve_with_discovery(test_func, trans_lib, problem_name, pop_size=60, gens=60):
+
+@dataclass
+class ExperimentProblem:
+    name: str
+    test_func: Any | None = None
+    pop_size: int = 60
+    gens: int = 60
+    kind: str = "evolution"
+    proof: Optional[Proof] = None
+    expected_proof_valid: Optional[bool] = None
+
+
+@dataclass
+class ExperimentConfig:
+    seed: Optional[int] = None
+    problems: Sequence[ExperimentProblem] = None
+    results_path: Optional[str] = None
+    primitive_fitness: float = 0.99
+    log_path: Optional[str] = None
+
+def evolve_with_discovery(
+    test_func,
+    trans_lib,
+    problem_name,
+    pop_size=60,
+    gens=60,
+    rng=None,
+    tool_lib=None,
+    run_logger: RunLogger | None = None,
+):
     """
     Evolution that discovers transformations during search.
     Compares solutions with same behavior but different complexity.
@@ -224,9 +317,21 @@ def evolve_with_discovery(test_func, trans_lib, problem_name, pop_size=60, gens=
     print(f"PROBLEM: {problem_name}")
     print(f"{'='*70}")
     print(f"Transformations known: {len(trans_lib.transformations)}")
+    if tool_lib:
+        print(f"Primitives available: {len(tool_lib.tools)}")
     print()
     
-    population = [random_expr(0, 3, ['n']) for _ in range(pop_size)]
+    rng = rng or random
+    population = [random_expr(0, 3, ['n'], rng=rng, tool_lib=tool_lib) for _ in range(pop_size)]
+    if run_logger is not None:
+        run_logger.log_event(
+            "problem_started",
+            {
+                "name": problem_name,
+                "pop_size": pop_size,
+                "generations": gens,
+            },
+        )
     
     best_ever = None
     best_fitness = 0.0
@@ -246,6 +351,8 @@ def evolve_with_discovery(test_func, trans_lib, problem_name, pop_size=60, gens=
                 all_solutions.append(Solution(expr, fitness))
         
         scores.sort(key=lambda x: x[1], reverse=True)
+        if run_logger is not None:
+            run_logger.log_population(gen, scores)
         
         if scores[0][1] > best_fitness:
             best_fitness = scores[0][1]
@@ -257,6 +364,15 @@ def evolve_with_discovery(test_func, trans_lib, problem_name, pop_size=60, gens=
         
         if scores[0][1] >= 0.99:
             print(f"✓ SOLVED at gen {gen} - continuing to find alternatives...")
+            if run_logger is not None:
+                run_logger.log_event(
+                    "solved",
+                    {
+                        "generation": gen,
+                        "best_expr": repr(scores[0][0]),
+                        "best_fitness": scores[0][1],
+                    },
+                )
         
         # Selection
         survivors = [e for e, _ in scores[:pop_size // 5]]
@@ -264,11 +380,11 @@ def evolve_with_discovery(test_func, trans_lib, problem_name, pop_size=60, gens=
         # Next generation
         next_pop = survivors.copy()
         while len(next_pop) < pop_size:
-            parent = random.choice(survivors)
-            child = mutate(parent, rate=0.2)
+            parent = rng.choice(survivors)
+            child = mutate(parent, rate=0.2, rng=rng, tool_lib=tool_lib)
             
             # Maybe apply known simplifications
-            if trans_lib.transformations and random.random() < 0.2:
+            if trans_lib.transformations and rng.random() < 0.2:
                 child = trans_lib.try_simplify(child)
             
             next_pop.append(child)
@@ -277,6 +393,15 @@ def evolve_with_discovery(test_func, trans_lib, problem_name, pop_size=60, gens=
     
     print(f"\nBest: {best_fitness:.3f}")
     print(f"Expression: {best_ever}")
+    if run_logger is not None:
+        run_logger.log_event(
+            "problem_finished",
+            {
+                "name": problem_name,
+                "best_expr": repr(best_ever),
+                "best_fitness": best_fitness,
+            },
+        )
     
     # DISCOVERY PHASE: Look for transformations in solutions we found
     print(f"\n  🔬 Analyzing {len(all_solutions)} solutions for transformations...")
@@ -299,55 +424,66 @@ def evolve_with_discovery(test_func, trans_lib, problem_name, pop_size=60, gens=
     else:
         print(f"  No new transformations found.")
     
-    return best_ever, best_fitness
+    return best_ever, best_fitness, all_solutions
 
 # ============================================
 # RANDOM GENERATION & MUTATION
 # ============================================
 
-def random_expr(depth=0, max_depth=3, vars_avail=None):
+def random_expr(depth=0, max_depth=3, vars_avail=None, rng=None, tool_lib=None):
     if vars_avail is None:
         vars_avail = ['n']
+    rng = rng or random
     
-    if depth >= max_depth or random.random() < 0.4:
-        choice = random.choice(['const', 'var'])
+    if depth >= max_depth or rng.random() < 0.4:
+        choice = rng.choice(['const', 'var'])
         if choice == 'const':
-            return Const(random.randint(0, 5))
+            return Const(rng.randint(0, 5))
         else:
-            return Var(random.choice(vars_avail))
-    
-    choice = random.choice(['binop', 'sum'])
+            return Var(rng.choice(vars_avail))
+
+    if tool_lib and tool_lib.tools and rng.random() < 0.3:
+        tool_name = rng.choice(list(tool_lib.tools.keys()))
+        arg = random_expr(depth + 1, max_depth, vars_avail, rng=rng, tool_lib=tool_lib)
+        return ToolCall(tool_name, arg, tool_lib)
+
+    choice = rng.choice(['binop', 'sum'])
     
     if choice == 'binop':
-        op = random.choice(['+', '-', '*', '/', '^'])
-        left = random_expr(depth + 1, max_depth, vars_avail)
-        right = random_expr(depth + 1, max_depth, vars_avail)
+        op = rng.choice(['+', '-', '*', '/', '^'])
+        left = random_expr(depth + 1, max_depth, vars_avail, rng=rng, tool_lib=tool_lib)
+        right = random_expr(depth + 1, max_depth, vars_avail, rng=rng, tool_lib=tool_lib)
         return BinOp(op, left, right)
     
     elif choice == 'sum':
-        var = random.choice(['i', 'j', 'k'])
-        start = random_expr(depth + 1, max_depth, vars_avail)
-        end = random_expr(depth + 1, max_depth, vars_avail)
-        body = random_expr(depth + 1, max_depth, vars_avail + [var])
+        var = rng.choice(['i', 'j', 'k'])
+        start = random_expr(depth + 1, max_depth, vars_avail, rng=rng, tool_lib=tool_lib)
+        end = random_expr(depth + 1, max_depth, vars_avail, rng=rng, tool_lib=tool_lib)
+        body = random_expr(depth + 1, max_depth, vars_avail + [var], rng=rng, tool_lib=tool_lib)
         return Sum(var, start, end, body)
 
-def mutate(expr, rate=0.3):
-    if random.random() < rate:
-        return random_expr(0, 3, ['n'])
+def mutate(expr, rate=0.3, rng=None, tool_lib=None):
+    rng = rng or random
+    if rng.random() < rate:
+        return random_expr(0, 3, ['n'], rng=rng, tool_lib=tool_lib)
     
     if isinstance(expr, Const):
-        return Const(expr.val + random.uniform(-1, 1))
+        return Const(expr.val + rng.uniform(-1, 1))
     elif isinstance(expr, Var):
         return expr
     elif isinstance(expr, BinOp):
         return BinOp(expr.op,
-                    mutate(expr.left, rate),
-                    mutate(expr.right, rate))
+                    mutate(expr.left, rate, rng=rng, tool_lib=tool_lib),
+                    mutate(expr.right, rate, rng=rng, tool_lib=tool_lib))
     elif isinstance(expr, Sum):
         return Sum(expr.var,
-                  mutate(expr.start, rate),
-                  mutate(expr.end, rate),
-                  mutate(expr.body, rate))
+                  mutate(expr.start, rate, rng=rng, tool_lib=tool_lib),
+                  mutate(expr.end, rate, rng=rng, tool_lib=tool_lib),
+                  mutate(expr.body, rate, rng=rng, tool_lib=tool_lib))
+    elif isinstance(expr, ToolCall):
+        return ToolCall(expr.tool_name,
+                        mutate(expr.arg, rate, rng=rng, tool_lib=tool_lib),
+                        expr.tool_library)
     return expr
 
 # ============================================
@@ -370,6 +506,146 @@ def test_cube(func):
     tests = [(0,0), (1,1), (2,8), (3,27), (4,64), (5,125)]
     return sum(1 for n, exp in tests if abs(func(n) - exp) < 0.1) / len(tests)
 
+def test_linear_plus_one(func):
+    tests = [(0,1), (1,3), (2,5), (3,7), (5,11), (10,21)]
+    return sum(1 for n, exp in tests if abs(func(n) - exp) < 0.1) / len(tests)
+
+# ============================================
+# EXPERIMENT RUNNER
+# ============================================
+
+def _default_problems():
+    return [
+        ExperimentProblem("f(n) = 2n", test_double, pop_size=60, gens=40),
+        ExperimentProblem("f(n) = n²", test_square, pop_size=60, gens=40),
+        ExperimentProblem("f(n) = sum(1 to n)", test_sum_to_n, pop_size=60, gens=60),
+        ExperimentProblem("f(n) = n³", test_cube, pop_size=60, gens=60),
+        ExperimentProblem("Algorithm: f(n) = 2n + 1", test_linear_plus_one, pop_size=60, gens=60),
+        _default_proof_problem(),
+    ]
+
+
+def _default_proof_problem() -> ExperimentProblem:
+    p = LVar("P")
+    q = LVar("Q")
+    proof = Proof(
+        [
+            ProofStep(p, "assumption"),
+            ProofStep(Implies(p, q), "assumption"),
+            ProofStep(q, "modus_ponens", premises=(0, 1)),
+        ]
+    )
+    return ExperimentProblem(
+        "Proof: modus ponens",
+        kind="proof",
+        proof=proof,
+        expected_proof_valid=True,
+    )
+
+
+def _serialize_transformation(trans):
+    return {
+        "id": trans.id,
+        "from_expr": str(trans.from_expr),
+        "to_expr": str(trans.to_expr),
+        "complexity_reduction": trans.complexity_reduction,
+        "from_signature": list(trans.from_signature),
+        "to_signature": list(trans.to_signature),
+    }
+
+
+def run_simplification_experiment(config: Optional[ExperimentConfig] = None):
+    if config is None:
+        config = ExperimentConfig()
+    if config.problems is None:
+        config.problems = _default_problems()
+
+    rng = random.Random(config.seed)
+    trans_lib = TransformationLibrary()
+    tool_lib = PrimitiveLibrary(min_fitness=config.primitive_fitness)
+    algorithm_lib = AlgorithmLibrary()
+    run_logger = RunLogger(Path(config.log_path), metadata={"seed": config.seed}) if config.log_path else None
+    results = {"seed": config.seed, "problems": [], "proofs": []}
+
+    for problem in config.problems:
+        if problem.kind == "proof":
+            if not problem.proof:
+                raise ValueError(f"Proof problem '{problem.name}' missing proof.")
+            print(f"\n{'='*70}")
+            print(f"PROOF PROBLEM: {problem.name}")
+            print(f"{'='*70}")
+            valid, issues = problem.proof.verify()
+            results["proofs"].append(
+                {
+                    "name": problem.name,
+                    "valid": valid,
+                    "expected_valid": problem.expected_proof_valid,
+                    "issues": [
+                        {
+                            "step": issue.step_index,
+                            "rule": issue.rule,
+                            "message": issue.message,
+                        }
+                        for issue in issues
+                    ],
+                }
+            )
+            continue
+        if problem.test_func is None:
+            raise ValueError(f"Problem '{problem.name}' missing test function.")
+        before_count = len(trans_lib.transformations)
+        best, fitness, all_solutions = evolve_with_discovery(
+            problem.test_func,
+            trans_lib,
+            problem.name,
+            pop_size=problem.pop_size,
+            gens=problem.gens,
+            rng=rng,
+            tool_lib=tool_lib,
+            run_logger=run_logger,
+        )
+        discover_algorithms_from_solutions(
+            [(sol.expr, sol.fitness) for sol in all_solutions],
+            algorithm_lib,
+        )
+        after_count = len(trans_lib.transformations)
+        saved_primitive = None
+        if tool_lib.should_save(best, fitness):
+            tool_name = f"primitive_{len(tool_lib.tools) + 1}"
+            tool_lib.add_tool(tool_name, best)
+            saved_primitive = tool_name
+        results["problems"].append({
+            "name": problem.name,
+            "best_expr": str(best),
+            "best_fitness": fitness,
+            "new_transformations": after_count - before_count,
+            "saved_primitive": saved_primitive,
+        })
+
+    results["transformations"] = [
+        _serialize_transformation(t) for t in trans_lib.transformations
+    ]
+    results["primitives"] = [
+        {"name": name, "expr": str(tool["expr"])}
+        for name, tool in tool_lib.tools.items()
+    ]
+    results["algorithms"] = [
+        {
+            "id": algo.id,
+            "template": algo.template.describe(),
+            "examples": len(algo.examples),
+        }
+        for algo in algorithm_lib.list_algorithms()
+    ]
+
+    if config.results_path:
+        with open(config.results_path, "w", encoding="utf-8") as handle:
+            json.dump(results, handle, indent=2)
+    if run_logger is not None:
+        run_logger.close()
+
+    return results, trans_lib, tool_lib, algorithm_lib
+
 # ============================================
 # MAIN
 # ============================================
@@ -383,37 +659,13 @@ if __name__ == '__main__':
     print("Simplification becomes a discoverable primitive.")
     print()
     
-    trans_lib = TransformationLibrary()
-    
-    # Problem 1: Double
     print("\n" + "="*70)
-    print("PHASE 1: Initial Problems")
+    print("RUNNING EXPERIMENT")
     print("="*70)
-    
-    best, fit = evolve_with_discovery(test_double, trans_lib, "f(n) = 2n", 
-                                     pop_size=60, gens=40)
-    
-    # Problem 2: Square
-    best, fit = evolve_with_discovery(test_square, trans_lib, "f(n) = n²",
-                                     pop_size=60, gens=40)
-    
-    # Problem 3: Sum
-    best, fit = evolve_with_discovery(test_sum_to_n, trans_lib, "f(n) = sum(1 to n)",
-                                     pop_size=60, gens=60)
-    
-    # Show discovered transformations
+    results, trans_lib, tool_lib, algorithm_lib = run_simplification_experiment()
     trans_lib.list_transformations()
-    
-    # Problem 4: Cube - can now use transformations
-    print("\n" + "="*70)
-    print("PHASE 2: Using Learned Transformations")
-    print("="*70)
-    
-    best, fit = evolve_with_discovery(test_cube, trans_lib, "f(n) = n³",
-                                     pop_size=60, gens=60)
-    
-    # Final report
-    trans_lib.list_transformations()
+    tool_lib.list_tools()
+    algorithm_lib.print_summary()
     
     print("\n" + "="*70)
     print("RESULT")

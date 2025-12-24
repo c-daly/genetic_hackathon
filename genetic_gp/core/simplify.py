@@ -67,6 +67,13 @@ def _exprs_equal(a: Any, b: Any) -> bool:
     return False
 
 
+def _collect_multiplication_factors(expr: Any) -> list[Any]:
+    """Flatten a multiplication chain into a list of factors."""
+    if isinstance(expr, BinOp) and expr.op == '*':
+        return _collect_multiplication_factors(expr.left) + _collect_multiplication_factors(expr.right)
+    return [expr]
+
+
 def substitute(expr: Any, var: str, replacement: Any) -> Any:
     """Substitute a variable with an expression."""
     if isinstance(expr, Const):
@@ -127,6 +134,33 @@ def simplify(expr: Any) -> Any:
                 return Const(0)
             if isinstance(right, Const) and right.val == 0:
                 return Const(0)
+            factors = _collect_multiplication_factors(expr)
+            var_name = None
+            power_count = 0
+            for factor in factors:
+                if isinstance(factor, Var):
+                    name = factor.name
+                    exponent = 1
+                elif (
+                    isinstance(factor, BinOp)
+                    and factor.op == '^'
+                    and isinstance(factor.left, Var)
+                    and isinstance(factor.right, Const)
+                    and factor.right.val == int(factor.right.val)
+                ):
+                    name = factor.left.name
+                    exponent = int(factor.right.val)
+                else:
+                    var_name = None
+                    break
+                if var_name is None:
+                    var_name = name
+                elif var_name != name:
+                    var_name = None
+                    break
+                power_count += exponent
+            if var_name and power_count > 1:
+                return BinOp('^', Var(var_name), Const(power_count))
         elif expr.op == '^':
             if isinstance(right, Const) and right.val == 1:
                 return left

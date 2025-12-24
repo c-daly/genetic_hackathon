@@ -29,6 +29,7 @@ from genetic_gp.core.logic import (
     is_satisfiable,
     classify_expression,
 )
+from genetic_gp.core.proofs import Proof, ProofIssue, ProofStep
 
 __all__ = [
     # Math expressions
@@ -72,4 +73,8 @@ __all__ = [
     "is_contingent",
     "is_satisfiable",
     "classify_expression",
+    # Proofs
+    "Proof",
+    "ProofIssue",
+    "ProofStep",
 ]

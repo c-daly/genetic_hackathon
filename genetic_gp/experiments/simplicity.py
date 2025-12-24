@@ -17,6 +17,8 @@ from genetic_gp.core.reporter import get_reporter
 from genetic_gp.core.config import get_config, Verbosity
 from genetic_gp.evolution.engine import evolve_and_save_primitive
 from genetic_gp.tools.library import PrimitiveLibrary
+from genetic_gp.tools.transformation import TransformationLibrary
+from genetic_gp.tools.algorithm import AlgorithmLibrary
 from genetic_gp.problems.math import test_double, test_square, test_sum_to_n, test_cube
 
 
@@ -28,6 +30,8 @@ def run_primitive_accumulation_demo():
 
     # Shared primitive library across all problems
     primitive_library = PrimitiveLibrary()
+    transformation_library = TransformationLibrary()
+    algorithm_library = AlgorithmLibrary()
 
     print("=" * 70)
     print("PRIMITIVE ACCUMULATION DEMO")
@@ -57,12 +61,16 @@ def run_primitive_accumulation_demo():
             fitness_fn,
             primitive_library=primitive_library,
             primitive_name=primitive_name,
+            transformation_library=transformation_library,
+            algorithm_library=algorithm_library,
             reporter=reporter if verbose else None,
             verbose=True,
             pop_size=60,
             generations=100,
             max_complexity=5,  # Target simple solutions
             simplify_generations=30,  # Spend up to 30 gens simplifying
+            transformation_discovery_interval=10,
+            algorithm_discovery_interval=10,
         )
 
         if result.solved:
@@ -76,6 +84,14 @@ def run_primitive_accumulation_demo():
     print("PRIMITIVE LIBRARY SUMMARY")
     print("=" * 70)
     primitive_library.print_summary()
+    print("\n" + "=" * 70)
+    print("TRANSFORMATION LIBRARY SUMMARY")
+    print("=" * 70)
+    transformation_library.print_summary()
+    print("\n" + "=" * 70)
+    print("ALGORITHM LIBRARY SUMMARY")
+    print("=" * 70)
+    algorithm_library.print_summary()
 
     # Save to file for persistence demo
     primitive_library.save("primitives.yaml")
